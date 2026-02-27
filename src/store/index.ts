@@ -57,10 +57,13 @@ export interface ResultState {
 // ── UI slice ──────────────────────────────────────────────────────────────────
 
 export type AppStep = 'load-source' | 'configure-mapping' | 'preview' | 'export'
+export type AppMode = 'migrate' | 'preset-builder'
 
 export interface UiState {
   /** Current step in the multi-step workflow. */
   currentStep: AppStep
+  /** Top-level application mode — migration workflow vs. visual preset builder. */
+  appMode: AppMode
   /** Whether any global loading operation is in progress. */
   isLoading: boolean
   /** Global error message (for top-level error display). */
@@ -100,6 +103,7 @@ export interface AppStore {
   // UI
   ui: UiState
   setCurrentStep: (step: AppStep) => void
+  setAppMode: (mode: AppMode) => void
   setIsLoading: (isLoading: boolean) => void
   setGlobalError: (error: string | null) => void
   setSelectedRowIndex: (index: number | null) => void
@@ -130,6 +134,7 @@ const initialResult: ResultState = {
 
 const initialUi: UiState = {
   currentStep: 'load-source',
+  appMode: 'migrate',
   isLoading: false,
   globalError: null,
   selectedRowIndex: null,
@@ -227,6 +232,9 @@ export const useAppStore = create<AppStore>()(
 
       setCurrentStep: (step) =>
         set(state => ({ ui: { ...state.ui, currentStep: step } })),
+
+      setAppMode: (mode) =>
+        set(state => ({ ui: { ...state.ui, appMode: mode } })),
 
       setIsLoading: (isLoading) =>
         set(state => ({ ui: { ...state.ui, isLoading } })),

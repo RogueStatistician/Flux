@@ -4,11 +4,14 @@ import { LoadSourceStep } from './components/steps/LoadSourceStep.js'
 import { ConfigureMappingStep } from './components/steps/ConfigureMappingStep.js'
 import { PreviewStep } from './components/steps/PreviewStep.js'
 import { ExportStep } from './components/steps/ExportStep.js'
+import { PresetBuilder } from './components/PresetBuilder/index.js'
 
 export default function App() {
   const currentStep = useAppStore(s => s.ui.currentStep)
+  const appMode = useAppStore(s => s.ui.appMode)
   const globalError = useAppStore(s => s.ui.globalError)
   const setGlobalError = useAppStore(s => s.setGlobalError)
+  const setAppMode = useAppStore(s => s.setAppMode)
 
   return (
     <div className="flex flex-col h-screen bg-background">
@@ -23,32 +26,66 @@ export default function App() {
             <p className="text-xs text-gray-500">SuccessFactors → Workday Migration Tool</p>
           </div>
         </div>
-        <span className="text-xs text-gray-400 font-mono">v0.1.0 — MVP Foundation</span>
+
+        <div className="flex items-center gap-2">
+          {/* Mode toggle */}
+          <div className="flex items-center bg-gray-100 rounded-lg p-1 gap-1">
+            <button
+              onClick={() => setAppMode('migrate')}
+              className={[
+                'px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+                appMode === 'migrate'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700',
+              ].join(' ')}
+            >
+              Run Migration
+            </button>
+            <button
+              onClick={() => setAppMode('preset-builder')}
+              className={[
+                'px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+                appMode === 'preset-builder'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700',
+              ].join(' ')}
+            >
+              Build Preset
+            </button>
+          </div>
+          <span className="text-xs text-gray-400 font-mono ml-2">v0.1.0</span>
+        </div>
       </header>
 
-      {/* Step navigation */}
-      <StepNav currentStep={currentStep} />
+      {appMode === 'preset-builder' ? (
+        <PresetBuilder />
+      ) : (
+        <>
+          {/* Step navigation */}
+          <StepNav currentStep={currentStep} />
 
-      {/* Global error banner */}
-      {globalError && (
-        <div className="mx-4 mt-4 p-3 bg-red-50 border border-red-200 rounded-md flex items-start justify-between">
-          <p className="text-sm text-red-700">{globalError}</p>
-          <button
-            onClick={() => setGlobalError(null)}
-            className="ml-3 text-red-400 hover:text-red-600 text-xs shrink-0"
-          >
-            Dismiss
-          </button>
-        </div>
+          {/* Global error banner */}
+          {globalError && (
+            <div className="mx-4 mt-4 p-3 bg-red-50 border border-red-200 rounded-md flex items-start justify-between">
+              <p className="text-sm text-red-700">{globalError}</p>
+              <button
+                onClick={() => setGlobalError(null)}
+                className="ml-3 text-red-400 hover:text-red-600 text-xs shrink-0"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {/* Main content */}
+          <main className="flex-1 overflow-auto">
+            {currentStep === 'load-source' && <LoadSourceStep />}
+            {currentStep === 'configure-mapping' && <ConfigureMappingStep />}
+            {currentStep === 'preview' && <PreviewStep />}
+            {currentStep === 'export' && <ExportStep />}
+          </main>
+        </>
       )}
-
-      {/* Main content */}
-      <main className="flex-1 overflow-auto">
-        {currentStep === 'load-source' && <LoadSourceStep />}
-        {currentStep === 'configure-mapping' && <ConfigureMappingStep />}
-        {currentStep === 'preview' && <PreviewStep />}
-        {currentStep === 'export' && <ExportStep />}
-      </main>
     </div>
   )
 }
