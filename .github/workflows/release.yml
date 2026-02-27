@@ -1,0 +1,109 @@
+name: Build and Release
+
+# Triggered when a version tag (e.g. v1.0.0) is pushed.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+# Needed so the release job can create a GitHub Release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Build the Electron app on each target platform in parallel.
+  # ─────────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build — ${{ matrix.os }}
+    strategy:
+      fail-fast: false          # keep building other platforms if one fails
+      matrix:
+        include:
+          # Linux → .AppImage
+          - os: ubuntu-latest
+            platform: linux
+            eb_flag: --linux
+            artifact_name: sf2wd-linux
+            artifact_path: release/*.AppImage
+
+          # Windows → portable .exe (no installer, no admin rights required)
+          - os: windows-latest
+            platform: win
+            eb_flag: --win
+            artifact_name: sf2wd-windows
+            artifact_path: release/*.exe
+
+          # macOS → universal .zip (Intel + Apple Silicon in one binary)
+          - os: macos-latest
+            platform: mac
+            eb_flag: --mac
+            artifact_name: sf2wd-macos
+            artifact_path: release/*.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # vite-plugin-electron compiles electron/main.ts + electron/preload.ts
+      # into dist-electron/ as part of the Vite build, so a single step covers
+      # both the renderer bundle and the Electron main/preload compilation.
+      - name: Build renderer + Electron main/preload
+        run: npm run build:renderer
+
+      # Run electron-builder with the platform flag from the matrix.
+      # electron-builder reads Win/Mac/Linux config from the "build" key in
+      # package.json (target, arch, artifactName, extraResources, etc.).
+      - name: Package Electron app
+        run: npx electron-builder ${{ matrix.eb_flag }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS: skip automatic code-signing until Apple certificates are
+          # stored in repository secrets (CSC_LINK / CSC_KEY_PASSWORD).
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+          retention-days: 1       # artifacts only need to survive until the release job runs
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # After all three platform builds succeed, collect artifacts and publish a
+  # GitHub Release containing all three executables.
+  # ─────────────────────────────────────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts           # each artifact lands in artifacts/<name>/
+
+      - name: Display collected files
+        run: find artifacts -type f
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true    # auto-populates body from merged PRs / commits
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
