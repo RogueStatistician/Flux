@@ -1,0 +1,334 @@
+{
+  "profileId": "sf-ec-worker-to-wd-eib-worker",
+  "description": "SAP SuccessFactors Employee Central → Workday EIB Worker (Flat Sheet). Starter profile with pre-configured standard field mappings. Ready to run against a standard SF EC export with zero manual configuration for universal fields. Client-specific lookup tables (cost centre, org unit, location) must be filled in before use.",
+  "version": "1.0",
+  "createdAt": "2026-02-26",
+  "updatedAt": "2026-02-26",
+  "author": "SF2WD Team",
+  "source": {
+    "system": "sap-successfactors",
+    "template": "ec-employee-export"
+  },
+  "target": {
+    "system": "workday",
+    "template": "eib-worker"
+  },
+  "settings": {
+    "onValidationError": "skip",
+    "dateLocale": "en-US",
+    "emptySourceValue": ["", null, "NULL", "N/A", "n/a"],
+    "enableExprRules": false
+  },
+  "lookupTables": {
+    "gender": {
+      "M": "Male",
+      "F": "Female",
+      "U": "Not Declared",
+      "Male": "Male",
+      "Female": "Female",
+      "Unknown": "Not Declared",
+      "0": "Not Declared",
+      "1": "Male",
+      "2": "Female"
+    },
+    "contractType": {
+      "1": "Regular",
+      "2": "Contractor",
+      "3": "Intern",
+      "4": "Temporary",
+      "Regular": "Regular",
+      "Contractor": "Contractor",
+      "Intern": "Intern",
+      "Temporary": "Temporary"
+    },
+    "employmentStatus": {
+      "A": "Active",
+      "I": "Inactive",
+      "L": "Leave of Absence",
+      "Active": "Active",
+      "Inactive": "Inactive"
+    },
+    "fteType": {
+      "1": "Full-Time",
+      "2": "Part-Time",
+      "F": "Full-Time",
+      "P": "Part-Time"
+    },
+    "country": {
+      "AF": "Afghanistan",
+      "AL": "Albania",
+      "DZ": "Algeria",
+      "AD": "Andorra",
+      "AO": "Angola",
+      "AR": "Argentina",
+      "AM": "Armenia",
+      "AU": "Australia",
+      "AT": "Austria",
+      "AZ": "Azerbaijan",
+      "BH": "Bahrain",
+      "BD": "Bangladesh",
+      "BY": "Belarus",
+      "BE": "Belgium",
+      "BZ": "Belize",
+      "BJ": "Benin",
+      "BR": "Brazil",
+      "BN": "Brunei",
+      "BG": "Bulgaria",
+      "CA": "Canada",
+      "CL": "Chile",
+      "CN": "China",
+      "CO": "Colombia",
+      "HR": "Croatia",
+      "CY": "Cyprus",
+      "CZ": "Czech Republic",
+      "DK": "Denmark",
+      "EG": "Egypt",
+      "EE": "Estonia",
+      "FI": "Finland",
+      "FR": "France",
+      "GE": "Georgia",
+      "DE": "Germany",
+      "GH": "Ghana",
+      "GR": "Greece",
+      "HK": "Hong Kong",
+      "HU": "Hungary",
+      "IN": "India",
+      "ID": "Indonesia",
+      "IE": "Ireland",
+      "IL": "Israel",
+      "IT": "Italy",
+      "JP": "Japan",
+      "JO": "Jordan",
+      "KZ": "Kazakhstan",
+      "KE": "Kenya",
+      "KW": "Kuwait",
+      "LV": "Latvia",
+      "LB": "Lebanon",
+      "LT": "Lithuania",
+      "LU": "Luxembourg",
+      "MY": "Malaysia",
+      "MX": "Mexico",
+      "MA": "Morocco",
+      "NL": "Netherlands",
+      "NZ": "New Zealand",
+      "NG": "Nigeria",
+      "NO": "Norway",
+      "OM": "Oman",
+      "PK": "Pakistan",
+      "PE": "Peru",
+      "PH": "Philippines",
+      "PL": "Poland",
+      "PT": "Portugal",
+      "QA": "Qatar",
+      "RO": "Romania",
+      "RU": "Russia",
+      "SA": "Saudi Arabia",
+      "SG": "Singapore",
+      "SK": "Slovakia",
+      "SI": "Slovenia",
+      "ZA": "South Africa",
+      "KR": "South Korea",
+      "ES": "Spain",
+      "SE": "Sweden",
+      "CH": "Switzerland",
+      "TW": "Taiwan",
+      "TH": "Thailand",
+      "TN": "Tunisia",
+      "TR": "Turkey",
+      "UA": "Ukraine",
+      "AE": "United Arab Emirates",
+      "GB": "United Kingdom",
+      "US": "United States",
+      "UY": "Uruguay",
+      "UZ": "Uzbekistan",
+      "VN": "Vietnam",
+      "YE": "Yemen",
+      "ZM": "Zambia",
+      "ZW": "Zimbabwe"
+    },
+    "orgUnit": {
+      "__ CONFIGURE __": "__ Fill in your client org unit mappings here __"
+    },
+    "location": {
+      "__ CONFIGURE __": "__ Fill in your client location mappings here __"
+    },
+    "costCenter": {
+      "__ CONFIGURE __": "__ Fill in your client cost centre mappings here __"
+    }
+  },
+  "fieldMappings": [
+    {
+      "targetField": "Employee_ID",
+      "rule": { "type": "direct", "sourceField": "PERNR" },
+      "notes": "Direct copy of SAP Personnel Number to Workday Employee ID."
+    },
+    {
+      "targetField": "First_Name",
+      "rule": { "type": "direct", "sourceField": "FIRSTNAME" }
+    },
+    {
+      "targetField": "Last_Name",
+      "rule": { "type": "direct", "sourceField": "LASTNAME" }
+    },
+    {
+      "targetField": "Middle_Name",
+      "rule": { "type": "direct", "sourceField": "MIDNAME" }
+    },
+    {
+      "targetField": "Gender",
+      "rule": {
+        "type": "lookup",
+        "sourceField": "GENDER",
+        "table": "gender",
+        "default": "Not Declared",
+        "onMissing": "warn"
+      }
+    },
+    {
+      "targetField": "Date_of_Birth",
+      "rule": {
+        "type": "dateFormat",
+        "sourceField": "BIRTHDT",
+        "inputFormat": "YYYYMMDD",
+        "outputFormat": "MM/DD/YYYY"
+      }
+    },
+    {
+      "targetField": "National_ID",
+      "rule": { "type": "direct", "sourceField": "NATID" }
+    },
+    {
+      "targetField": "Hire_Date",
+      "rule": {
+        "type": "dateFormat",
+        "sourceField": "EINDT",
+        "inputFormat": "YYYYMMDD",
+        "outputFormat": "MM/DD/YYYY"
+      }
+    },
+    {
+      "targetField": "Termination_Date",
+      "rule": {
+        "type": "dateFormat",
+        "sourceField": "AUSDT",
+        "inputFormat": "YYYYMMDD",
+        "outputFormat": "MM/DD/YYYY"
+      }
+    },
+    {
+      "targetField": "Contract_Type",
+      "rule": {
+        "type": "lookup",
+        "sourceField": "PERSK",
+        "table": "contractType",
+        "default": "Regular",
+        "onMissing": "warn"
+      }
+    },
+    {
+      "targetField": "Employment_Status",
+      "rule": {
+        "type": "lookup",
+        "sourceField": "EMPST",
+        "table": "employmentStatus",
+        "default": "Active",
+        "onMissing": "warn"
+      }
+    },
+    {
+      "targetField": "FTE_Type",
+      "rule": {
+        "type": "lookup",
+        "sourceField": "VDSK1",
+        "table": "fteType",
+        "default": "Full-Time",
+        "onMissing": "warn"
+      }
+    },
+    {
+      "targetField": "FTE_Percent",
+      "rule": { "type": "direct", "sourceField": "BTZEI" },
+      "notes": "SAP stores as decimal (1.0 = 100%). Convert to % if required by target template."
+    },
+    {
+      "targetField": "Organisation_Unit",
+      "rule": {
+        "type": "lookup",
+        "sourceField": "ORGEH",
+        "table": "orgUnit",
+        "onMissing": "warn"
+      },
+      "notes": "CLIENT-SPECIFIC: Fill in orgUnit lookup table with your client's org unit ID mappings."
+    },
+    {
+      "targetField": "Position_ID",
+      "rule": { "type": "direct", "sourceField": "PLANS" }
+    },
+    {
+      "targetField": "Job_Title",
+      "rule": { "type": "direct", "sourceField": "STELL" }
+    },
+    {
+      "targetField": "Location",
+      "rule": {
+        "type": "lookup",
+        "sourceField": "WERKS",
+        "table": "location",
+        "onMissing": "warn"
+      },
+      "notes": "CLIENT-SPECIFIC: Fill in location lookup table with your client's personnel area → Workday Location mappings."
+    },
+    {
+      "targetField": "Country",
+      "rule": {
+        "type": "lookup",
+        "sourceField": "LAND1",
+        "table": "country",
+        "onMissing": "warn"
+      },
+      "notes": "Converts ISO 3166-1 alpha-2 country codes (DE, FR, GB) to Workday country reference names."
+    },
+    {
+      "targetField": "Company",
+      "rule": { "type": "direct", "sourceField": "BUKRS" },
+      "notes": "Company code direct copy. Update with lookup table if Workday uses different company identifiers."
+    },
+    {
+      "targetField": "Cost_Center",
+      "rule": {
+        "type": "lookup",
+        "sourceField": "KOSTL",
+        "table": "costCenter",
+        "onMissing": "warn"
+      },
+      "notes": "CLIENT-SPECIFIC: Fill in costCenter lookup table with your client's cost centre mappings."
+    },
+    {
+      "targetField": "Manager_ID",
+      "rule": { "type": "direct", "sourceField": "MANAGER_PERNR" },
+      "notes": "Assumes Workday Manager Employee ID matches SAP Personnel Number. Adjust if tenant uses different IDs."
+    },
+    {
+      "targetField": "Email_Address",
+      "rule": { "type": "direct", "sourceField": "EMAIL" }
+    },
+    {
+      "targetField": "Phone_Number",
+      "rule": { "type": "direct", "sourceField": "PHONE" }
+    },
+    {
+      "targetField": "Annual_Salary",
+      "rule": { "type": "direct", "sourceField": "MONTHLY_SALARY" },
+      "notes": "WARNING: This copies MONTHLY_SALARY directly. Enable expr rules and use 'MONTHLY_SALARY * 12' if annual salary is required."
+    },
+    {
+      "targetField": "Salary_Currency",
+      "rule": { "type": "direct", "sourceField": "CURRENCY" }
+    },
+    {
+      "targetField": "Source_System",
+      "rule": { "type": "constant", "value": "SuccessFactors" },
+      "notes": "Fixed audit field — always populated with 'SuccessFactors' by SF2WD."
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "name": "sf2wd",
+  "version": "0.1.0",
+  "description": "SAP SuccessFactors → Workday Data Migration Tool",
+  "main": "dist-electron/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && electron-builder",
+    "build:renderer": "vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "electron:dev": "concurrently \"vite\" \"wait-on tcp:5173 && electron .\"",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "dayjs": "^1.11.10",
+    "electron-store": "^8.2.0",
+    "expr-eval": "^2.0.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5",
+    "zod": "^3.23.8",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.1",
+    "@types/node": "^20.16.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.1",
+    "electron": "^31.6.0",
+    "electron-builder": "^25.0.5",
+    "postcss": "^8.4.45",
+    "tailwindcss": "^3.4.10",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2",
+    "vite-plugin-electron": "^0.28.8",
+    "vite-plugin-electron-renderer": "^0.14.6",
+    "vitest": "^2.1.1",
+    "wait-on": "^8.0.0"
+  },
+  "build": {
+    "appId": "com.sf2wd.app",
+    "productName": "SF2WD",
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "portable"
+    },
+    "mac": {
+      "target": "zip",
+      "universal": true
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "extraResources": [
+      { "from": "templates", "to": "templates" },
+      { "from": "profiles", "to": "profiles" }
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-electron/
+release/
+*.local
+.env
+.env.*
+!.env.example
+coverage/
+.vite/
