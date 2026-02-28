@@ -34,7 +34,6 @@ export type WorkspaceSection =
 /** Field descriptor returned by the schema inference engine before it is saved. */
 export interface InferredField {
   name: string
-  displayName: string
   dataType: FieldType
   isRequired: boolean
   isNullable: boolean
@@ -68,7 +67,7 @@ export interface ObjectField {
   id: string
   objectId: string
   name: string
-  displayName?: string
+  description?: string
   dataType: FieldType
   isRequired: boolean
   isNullable: boolean

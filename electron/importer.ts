@@ -11,11 +11,17 @@ type FieldType = 'string' | 'integer' | 'float' | 'date' | 'datetime' | 'picklis
 
 export interface InferredField {
   name: string
-  displayName: string
   dataType: FieldType
   isRequired: boolean
   isNullable: boolean
   dateFormat?: string
+}
+
+export interface ParseOptions {
+  /** Column separator for CSV files (default: auto-detected by SheetJS). */
+  separator?: string
+  /** Number of rows to skip before the header row (default: 0). */
+  skipRows?: number
 }
 
 // ── Date pattern library ──────────────────────────────────────────────────────
@@ -34,13 +40,17 @@ const DATE_PATTERNS: { re: RegExp; fmt: string }[] = [
 /**
  * Parse the first sheet of an Excel or CSV file into headers + rows.
  * @param maxRows  Maximum data rows to return (undefined = all rows).
+ * @param options  Parsing options: separator (CSV only), skipRows (skip N rows before header).
  */
 export function parseFile(
   filePath: string,
-  maxRows?: number
+  maxRows?: number,
+  options?: ParseOptions
 ): { headers: string[]; rows: Record<string, string>[] } {
   const buf = fs.readFileSync(filePath)
-  const workbook = XLSX.read(buf, { raw: false, cellDates: false })
+  const readOpts: XLSX.ParsingOptions = { raw: false, cellDates: false }
+  if (options?.separator) readOpts.FS = options.separator
+  const workbook = XLSX.read(buf, readOpts)
   const sheet = workbook.Sheets[workbook.SheetNames[0]]
   const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,
@@ -48,14 +58,17 @@ export function parseFile(
     raw: false,
   })
 
-  if (raw.length === 0) return { headers: [], rows: [] }
+  const headerRowIndex = options?.skipRows ?? 0
+  if (raw.length <= headerRowIndex) return { headers: [], rows: [] }
 
-  const headers = (raw[0] as unknown[])
+  const headers = (raw[headerRowIndex] as unknown[])
     .map(h => String(h ?? '').trim())
     .filter(Boolean)
 
-  const end = maxRows !== undefined ? Math.min(raw.length, maxRows + 1) : raw.length
-  const rows = raw.slice(1, end).map(row => {
+  const end = maxRows !== undefined
+    ? Math.min(raw.length, maxRows + headerRowIndex + 1)
+    : raw.length
+  const rows = raw.slice(headerRowIndex + 1, end).map(row => {
     const r = row as unknown[]
     const obj: Record<string, string> = {}
     headers.forEach((h, i) => { obj[h] = String(r[i] ?? '') })
@@ -68,8 +81,8 @@ export function parseFile(
 /**
  * Parse only the header row of a file (for target template import).
  */
-export function parseHeaders(filePath: string): string[] {
-  return parseFile(filePath, 0).headers
+export function parseHeaders(filePath: string, options?: ParseOptions): string[] {
+  return parseFile(filePath, 0, options).headers
 }
 
 // ── Schema inference ──────────────────────────────────────────────────────────
@@ -111,7 +124,6 @@ export function inferSchema(
 
     return {
       name: header,
-      displayName: header,
       dataType,
       isRequired: false,
       isNullable: true,

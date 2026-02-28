@@ -10,7 +10,7 @@
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build:preload": "esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs --sourcemap",
-    "electron:dev": "npm run build:preload && concurrently \"vite\" \"wait-on tcp:5173 && electron .\" \"esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs --sourcemap --watch\"",
+    "electron:dev": "npm run build:preload && concurrently \"vite\" \"esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs --sourcemap --watch\"",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx",

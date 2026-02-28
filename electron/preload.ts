@@ -30,11 +30,11 @@ const electronAPI = {
     ipcRenderer.invoke('project:delete'),
 
   // ── Objects & Fields ───────────────────────────────────────────────────────
-  inferSchema: (filePath: string) =>
-    ipcRenderer.invoke('objects:inferSchema', filePath),
+  inferSchema: (filePath: string, options?: { separator?: string; skipRows?: number }) =>
+    ipcRenderer.invoke('objects:inferSchema', filePath, options),
 
-  inferSchemaFromHeaders: (filePath: string) =>
-    ipcRenderer.invoke('objects:inferSchemaFromHeaders', filePath),
+  inferSchemaFromHeaders: (filePath: string, options?: { separator?: string; skipRows?: number }) =>
+    ipcRenderer.invoke('objects:inferSchemaFromHeaders', filePath, options),
 
   createObject: (role: 'source' | 'target', name: string, description?: string, systemName?: string, outputFormat?: 'xlsx' | 'csv') =>
     ipcRenderer.invoke('objects:create', role, name, description, systemName, outputFormat),
@@ -51,8 +51,8 @@ const electronAPI = {
   deleteObject: (id: string) =>
     ipcRenderer.invoke('objects:delete', id),
 
-  importRows: (id: string, filePath: string) =>
-    ipcRenderer.invoke('objects:importRows', id, filePath),
+  importRows: (id: string, filePath: string, options?: { separator?: string; skipRows?: number }) =>
+    ipcRenderer.invoke('objects:importRows', id, filePath, options),
 
   getRows: (id: string, offset: number, limit: number) =>
     ipcRenderer.invoke('objects:getRows', id, offset, limit),

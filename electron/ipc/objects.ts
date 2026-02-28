@@ -4,7 +4,7 @@
  */
 import { ipcMain } from 'electron'
 import { getDb } from '../db.js'
-import { parseFile, parseHeaders, inferSchema } from '../importer.js'
+import { parseFile, parseHeaders, inferSchema, type ParseOptions } from '../importer.js'
 
 // ── Row types (main-process side) ─────────────────────────────────────────────
 
@@ -26,7 +26,7 @@ interface FieldRow {
   id: string
   object_id: string
   name: string
-  display_name: string | null
+  description: string | null
   data_type: string
   is_required: number
   is_nullable: number
@@ -60,7 +60,7 @@ function rowToField(r: FieldRow) {
     id: r.id,
     objectId: r.object_id,
     name: r.name,
-    displayName: r.display_name ?? undefined,
+    description: r.description ?? undefined,
     dataType: r.data_type as import('../../src/types/index.js').FieldType,
     isRequired: r.is_required === 1,
     isNullable: r.is_nullable === 1,
@@ -84,15 +84,15 @@ function getProjectId(): string {
 export function registerObjectHandlers(): void {
 
   /** Infer schema from an Excel/CSV file without touching the DB. */
-  ipcMain.handle('objects:inferSchema', async (_e, filePath: string) => {
-    const { headers, rows } = parseFile(filePath, 200)
+  ipcMain.handle('objects:inferSchema', async (_e, filePath: string, options?: ParseOptions) => {
+    const { headers, rows } = parseFile(filePath, 200, options)
     const fields = inferSchema(headers, rows)
     return { headers, fields }
   })
 
   /** Read only the headers from a file (for target template import). */
-  ipcMain.handle('objects:inferSchemaFromHeaders', async (_e, filePath: string) => {
-    const headers = parseHeaders(filePath)
+  ipcMain.handle('objects:inferSchemaFromHeaders', async (_e, filePath: string, options?: ParseOptions) => {
+    const headers = parseHeaders(filePath, options)
     const fields = inferSchema(headers, [])
     return { headers, fields }
   })
@@ -175,9 +175,9 @@ export function registerObjectHandlers(): void {
    * Import rows from a file into an existing data object.
    * Replaces any existing source_rows for that object.
    */
-  ipcMain.handle('objects:importRows', async (_e, id: string, filePath: string) => {
+  ipcMain.handle('objects:importRows', async (_e, id: string, filePath: string, options?: ParseOptions) => {
     const db = getDb()
-    const { rows } = parseFile(filePath)
+    const { rows } = parseFile(filePath, undefined, options)
 
     const deleteRows = db.prepare('DELETE FROM source_rows WHERE object_id = ?')
     const insertRow = db.prepare(
@@ -221,10 +221,11 @@ export function registerObjectHandlers(): void {
       objectId: string,
       fields: Array<{
         name: string
-        displayName?: string
+        description?: string
         dataType: string
         isRequired: boolean
         isNullable: boolean
+        picklistId?: string
         dateFormat?: string
         maxLength?: number
         notes?: string
@@ -234,9 +235,9 @@ export function registerObjectHandlers(): void {
       const del = db.prepare('DELETE FROM object_fields WHERE object_id = ?')
       const ins = db.prepare(`
         INSERT INTO object_fields
-          (id, object_id, name, display_name, data_type, is_required, is_nullable,
-           date_format, max_length, position, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, object_id, name, description, data_type, is_required, is_nullable,
+           picklist_id, date_format, max_length, position, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
 
       const upsertAll = db.transaction(() => {
@@ -246,10 +247,11 @@ export function registerObjectHandlers(): void {
             crypto.randomUUID(),
             objectId,
             f.name,
-            f.displayName ?? null,
+            f.description ?? null,
             f.dataType,
             f.isRequired ? 1 : 0,
             f.isNullable ? 1 : 0,
+            f.picklistId || null,
             f.dateFormat ?? null,
             f.maxLength ?? null,
             i,

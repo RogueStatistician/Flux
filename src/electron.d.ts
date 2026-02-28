@@ -42,14 +42,14 @@ interface ElectronAPI {
   deleteProject(): Promise<void>
 
   // ── Objects & Fields ───────────────────────────────────────────────────────
-  inferSchema(filePath: string): Promise<{ headers: string[]; fields: InferredField[] }>
-  inferSchemaFromHeaders(filePath: string): Promise<{ headers: string[]; fields: InferredField[] }>
+  inferSchema(filePath: string, options?: { separator?: string; skipRows?: number }): Promise<{ headers: string[]; fields: InferredField[] }>
+  inferSchemaFromHeaders(filePath: string, options?: { separator?: string; skipRows?: number }): Promise<{ headers: string[]; fields: InferredField[] }>
   createObject(role: ObjectRole, name: string, description?: string, systemName?: string, outputFormat?: OutputFormat): Promise<DataObject>
   listObjects(role?: ObjectRole): Promise<DataObject[]>
   getObject(id: string): Promise<{ object: DataObject; fields: ObjectField[] }>
   updateObject(id: string, updates: Partial<{ name: string; description: string; systemName: string; outputFormat: OutputFormat }>): Promise<DataObject>
   deleteObject(id: string): Promise<void>
-  importRows(id: string, filePath: string): Promise<{ rowCount: number }>
+  importRows(id: string, filePath: string, options?: { separator?: string; skipRows?: number }): Promise<{ rowCount: number }>
   getRows(id: string, offset: number, limit: number): Promise<{ rows: Record<string, string>[]; total: number }>
   upsertFields(objectId: string, fields: Omit<ObjectField, 'id' | 'objectId' | 'position'>[]): Promise<ObjectField[]>
 

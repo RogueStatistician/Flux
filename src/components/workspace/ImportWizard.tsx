@@ -3,9 +3,13 @@
  *
  * Sources:  file → infer schema → edit schema → metadata → create + import rows
  * Targets:  file (headers only) OR manual → edit/build schema → metadata → create
+ *
+ * CSV import: user can set a custom column separator and how many header rows to skip
+ * (needed for SAP files that ship with two header rows).
+ * Picklist fields: user can reference which picklist the field maps to.
  */
-import { useState, useEffect } from 'react'
-import type { DataObject, InferredField, ObjectRole, OutputFormat } from '../../types/index.js'
+import { useState, useEffect, useCallback } from 'react'
+import type { DataObject, InferredField, ObjectRole, OutputFormat, Picklist } from '../../types/index.js'
 
 type Step = 'schema' | 'details' | 'saving'
 type FieldType = InferredField['dataType']
@@ -20,17 +24,36 @@ interface Props {
   onCancel: () => void
 }
 
-interface EditableField extends InferredField {
+interface EditableField {
   _key: string
+  name: string
+  dataType: FieldType
+  isRequired: boolean
+  isNullable: boolean
+  description?: string
+  picklistId?: string
+  dateFormat?: string
 }
 
 function makeKey() { return Math.random().toString(36).slice(2) }
+
+function isCsvPath(p: string | null): boolean {
+  return Boolean(p?.toLowerCase().endsWith('.csv'))
+}
 
 export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
   const [step, setStep] = useState<Step>('schema')
   const [fields, setFields] = useState<EditableField[]>([])
   const [loadingSchema, setLoadingSchema] = useState(false)
   const [schemaError, setSchemaError] = useState<string | null>(null)
+
+  // CSV import options
+  const isCsv = isCsvPath(filePath)
+  const [separator, setSeparator] = useState(',')
+  const [skipRows, setSkipRows] = useState(0)
+
+  // Picklists for the matching role side
+  const [picklists, setPicklists] = useState<Picklist[]>([])
 
   // Details form
   const [name, setName] = useState('')
@@ -39,23 +62,51 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
   const [outputFormat, setOutputFormat] = useState<OutputFormat>('xlsx')
   const [saveError, setSaveError] = useState<string | null>(null)
 
-  // Infer schema on mount when a filePath is provided
+  // Load picklists for the matching side once
   useEffect(() => {
+    if (!window.electronAPI) return
+    window.electronAPI.listPicklists(role === 'source' ? 'source' : 'target')
+      .then(setPicklists)
+      .catch(() => {})
+  }, [role])
+
+  // ── Schema loading ─────────────────────────────────────────────────────────
+
+  const loadSchema = useCallback(async (sep: string, skip: number) => {
     if (!filePath) return
     setLoadingSchema(true)
-    const inferFn = role === 'target'
-      ? window.electronAPI.inferSchemaFromHeaders(filePath)
-      : window.electronAPI.inferSchema(filePath)
-
-    inferFn.then(({ fields: inferred }) => {
-      setFields(inferred.map(f => ({ ...f, _key: makeKey() })))
-      // Pre-fill name from filename
-      const base = filePath.split(/[\\/]/).pop() ?? ''
-      setName(base.replace(/\.[^.]+$/, ''))
-    }).catch(e => {
+    setSchemaError(null)
+    try {
+      const opts = {
+        ...(isCsv && sep !== ',' ? { separator: sep } : {}),
+        ...(skip > 0 ? { skipRows: skip } : {}),
+      }
+      const hasOpts = Object.keys(opts).length > 0
+      const inferFn = role === 'target'
+        ? window.electronAPI.inferSchemaFromHeaders(filePath, hasOpts ? opts : undefined)
+        : window.electronAPI.inferSchema(filePath, hasOpts ? opts : undefined)
+      const { fields: inferred } = await inferFn
+      setFields(inferred.map(f => ({
+        _key: makeKey(),
+        name: f.name,
+        dataType: f.dataType,
+        isRequired: f.isRequired,
+        isNullable: f.isNullable,
+        dateFormat: f.dateFormat,
+      })))
+      setName(prev => prev || (filePath.split(/[\\/]/).pop() ?? '').replace(/\.[^.]+$/, ''))
+    } catch (e) {
       setSchemaError(e instanceof Error ? e.message : 'Failed to read file.')
-    }).finally(() => setLoadingSchema(false))
-  }, [filePath, role])
+    } finally {
+      setLoadingSchema(false)
+    }
+  }, [filePath, role, isCsv])
+
+  // Auto-load on mount
+  useEffect(() => {
+    loadSchema(separator, skipRows)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Only once on mount; user re-triggers via button after changing CSV options
 
   // ── Field editing helpers ─────────────────────────────────────────────────
 
@@ -65,7 +116,7 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
 
   function addField() {
     setFields(prev => [...prev, {
-      _key: makeKey(), name: '', displayName: '', dataType: 'string',
+      _key: makeKey(), name: '', dataType: 'string',
       isRequired: false, isNullable: true,
     }])
   }
@@ -104,7 +155,14 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
       }
 
       if (role === 'source' && filePath) {
-        await window.electronAPI.importRows(object.id, filePath)
+        const opts = {
+          ...(isCsv && separator !== ',' ? { separator } : {}),
+          ...(skipRows > 0 ? { skipRows } : {}),
+        }
+        await window.electronAPI.importRows(
+          object.id, filePath,
+          Object.keys(opts).length ? opts : undefined
+        )
       }
 
       onDone(object)
@@ -121,7 +179,7 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
 
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col mx-4">
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col mx-4">
         {/* Header */}
         <div className="px-6 py-4 border-b flex items-center justify-between shrink-0">
           <div>
@@ -141,9 +199,16 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
         <div className="flex-1 overflow-y-auto p-6">
           {step === 'schema' && (
             <SchemaStep
+              isCsv={isCsv}
+              separator={separator}
+              onSeparator={setSeparator}
+              skipRows={skipRows}
+              onSkipRows={setSkipRows}
+              onReInfer={() => loadSchema(separator, skipRows)}
               loading={loadingSchema}
               error={schemaError}
               fields={fields}
+              picklists={picklists}
               onUpdateField={updateField}
               onAddField={addField}
               onRemoveField={removeField}
@@ -195,11 +260,17 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
 // ── Schema step ───────────────────────────────────────────────────────────────
 
 function SchemaStep({
-  loading, error, fields, onUpdateField, onAddField, onRemoveField,
+  isCsv, separator, onSeparator, skipRows, onSkipRows, onReInfer,
+  loading, error, fields, picklists, onUpdateField, onAddField, onRemoveField,
 }: {
+  isCsv: boolean
+  separator: string; onSeparator: (v: string) => void
+  skipRows: number; onSkipRows: (v: number) => void
+  onReInfer: () => void
   loading: boolean
   error: string | null
   fields: EditableField[]
+  picklists: Picklist[]
   onUpdateField: (key: string, patch: Partial<EditableField>) => void
   onAddField: () => void
   onRemoveField: (key: string) => void
@@ -215,6 +286,39 @@ function SchemaStep({
 
   return (
     <div>
+      {/* CSV / Excel import options */}
+      <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-100 flex flex-wrap items-end gap-4">
+        {isCsv && (
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Column separator</label>
+            <input
+              value={separator}
+              onChange={e => onSeparator(e.target.value)}
+              maxLength={3}
+              className="w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 font-mono"
+              placeholder=","
+            />
+          </div>
+        )}
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1">Skip header rows</label>
+          <input
+            type="number"
+            min={0}
+            max={5}
+            value={skipRows}
+            onChange={e => onSkipRows(Math.max(0, parseInt(e.target.value, 10) || 0))}
+            className="w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+        </div>
+        <button
+          onClick={onReInfer}
+          className="px-3 py-1 text-xs bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 font-medium"
+        >
+          ↺ Re-infer schema
+        </button>
+      </div>
+
       {error && (
         <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">
           {error}
@@ -227,43 +331,64 @@ function SchemaStep({
 
       {/* Table header */}
       <div className="grid grid-cols-[2fr_2fr_1.5fr_auto_auto] gap-2 px-2 mb-1">
-        {['Column name', 'Display name', 'Type', 'Req', ''].map(h => (
+        {['Column name', 'Description', 'Type', 'Req', ''].map(h => (
           <span key={h} className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{h}</span>
         ))}
       </div>
 
-      <div className="space-y-1.5 max-h-80 overflow-y-auto">
+      <div className="space-y-1.5 max-h-72 overflow-y-auto">
         {fields.map(f => (
-          <div key={f._key} className="grid grid-cols-[2fr_2fr_1.5fr_auto_auto] gap-2 items-center px-2 py-1 rounded-lg hover:bg-gray-50">
-            <input
-              value={f.name}
-              onChange={e => onUpdateField(f._key, { name: e.target.value })}
-              className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
-              placeholder="field_name"
-            />
-            <input
-              value={f.displayName}
-              onChange={e => onUpdateField(f._key, { displayName: e.target.value })}
-              className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
-              placeholder="Display Name"
-            />
-            <select
-              value={f.dataType}
-              onChange={e => onUpdateField(f._key, { dataType: e.target.value as FieldType })}
-              className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
-            >
-              {FIELD_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-            <input
-              type="checkbox"
-              checked={f.isRequired}
-              onChange={e => onUpdateField(f._key, { isRequired: e.target.checked })}
-              className="w-4 h-4 accent-blue-600 cursor-pointer"
-            />
-            <button
-              onClick={() => onRemoveField(f._key)}
-              className="text-gray-300 hover:text-red-400 text-xs leading-none w-4 text-center"
-            >✕</button>
+          <div key={f._key} className="space-y-1">
+            <div className="grid grid-cols-[2fr_2fr_1.5fr_auto_auto] gap-2 items-center px-2 py-1 rounded-lg hover:bg-gray-50">
+              <input
+                value={f.name}
+                onChange={e => onUpdateField(f._key, { name: e.target.value })}
+                className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 font-mono"
+                placeholder="field_name"
+              />
+              <input
+                value={f.description ?? ''}
+                onChange={e => onUpdateField(f._key, { description: e.target.value || undefined })}
+                className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                placeholder="Optional description…"
+              />
+              <select
+                value={f.dataType}
+                onChange={e => onUpdateField(f._key, {
+                  dataType: e.target.value as FieldType,
+                  picklistId: e.target.value !== 'picklist' ? undefined : f.picklistId,
+                })}
+                className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+              >
+                {FIELD_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <input
+                type="checkbox"
+                checked={f.isRequired}
+                onChange={e => onUpdateField(f._key, { isRequired: e.target.checked })}
+                className="w-4 h-4 accent-blue-600 cursor-pointer"
+              />
+              <button
+                onClick={() => onRemoveField(f._key)}
+                className="text-gray-300 hover:text-red-400 text-xs leading-none w-4 text-center"
+              >✕</button>
+            </div>
+            {/* Picklist reference row */}
+            {f.dataType === 'picklist' && (
+              <div className="px-2 pb-1">
+                <label className="text-xs text-gray-400 mr-2">Picklist:</label>
+                <select
+                  value={f.picklistId ?? ''}
+                  onChange={e => onUpdateField(f._key, { picklistId: e.target.value || undefined })}
+                  className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-purple-400 bg-white"
+                >
+                  <option value="">— none —</option>
+                  {picklists.map(pl => (
+                    <option key={pl.id} value={pl.id}>{pl.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
         ))}
       </div>

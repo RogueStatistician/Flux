@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import type { DataObject, ObjectField } from '../../types/index.js'
+import type { DataObject, ObjectField, Picklist } from '../../types/index.js'
 
 const TYPE_COLORS: Record<string, string> = {
   string: 'bg-gray-100 text-gray-600',
@@ -9,6 +9,8 @@ const TYPE_COLORS: Record<string, string> = {
   datetime: 'bg-orange-50 text-orange-700',
   picklist: 'bg-purple-50 text-purple-700',
 }
+
+const FIELD_TYPES = ['string', 'integer', 'float', 'date', 'datetime', 'picklist'] as const
 
 const PAGE_SIZE = 50
 
@@ -25,6 +27,7 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [picklists, setPicklists] = useState<Picklist[]>([])
 
   // Load fields on mount
   useEffect(() => {
@@ -33,6 +36,13 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
       setLoading(false)
     }).catch(() => setLoading(false))
   }, [object.id])
+
+  // Load picklists for the matching side
+  useEffect(() => {
+    window.electronAPI.listPicklists(object.role === 'source' ? 'source' : 'target')
+      .then(setPicklists)
+      .catch(() => {})
+  }, [object.role])
 
   // Load data rows when on data tab
   useEffect(() => {
@@ -45,9 +55,10 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
   }, [tab, object.id, object.role, page])
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
-  const headers = fields.length > 0
-    ? fields.map(f => f.displayName || f.name)
-    : rows.length > 0 ? Object.keys(rows[0]) : []
+
+  const handleFieldsSaved = (updated: ObjectField[]) => {
+    setFields(updated)
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -106,10 +117,15 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
               <span className="text-sm">Loading…</span>
             </div>
           ) : tab === 'schema' ? (
-            <SchemaTab fields={fields} />
+            <SchemaTab
+              objectId={object.id}
+              fields={fields}
+              picklists={picklists}
+              onFieldsSaved={handleFieldsSaved}
+            />
           ) : (
             <DataTab
-              headers={headers}
+              fields={fields}
               rows={rows}
               page={page}
               totalPages={totalPages}
@@ -124,8 +140,69 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
 
 // ── Schema tab ────────────────────────────────────────────────────────────────
 
-function SchemaTab({ fields }: { fields: ObjectField[] }) {
-  if (fields.length === 0) {
+interface EditableField {
+  id: string
+  name: string
+  description?: string
+  dataType: typeof FIELD_TYPES[number]
+  isRequired: boolean
+  isNullable: boolean
+  picklistId?: string
+  dateFormat?: string
+  maxLength?: number
+  notes?: string
+}
+
+function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
+  objectId: string
+  fields: ObjectField[]
+  picklists: Picklist[]
+  onFieldsSaved: (fields: ObjectField[]) => void
+}) {
+  const [editMode, setEditMode] = useState(false)
+  const [editedFields, setEditedFields] = useState<EditableField[]>([])
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  function enterEdit() {
+    setEditedFields(fields.map(f => ({
+      id: f.id,
+      name: f.name,
+      description: f.description,
+      dataType: f.dataType as typeof FIELD_TYPES[number],
+      isRequired: f.isRequired,
+      isNullable: f.isNullable,
+      picklistId: f.picklistId,
+      dateFormat: f.dateFormat,
+      maxLength: f.maxLength,
+      notes: f.notes,
+    })))
+    setSaveError(null)
+    setEditMode(true)
+  }
+
+  function updateField(id: string, patch: Partial<EditableField>) {
+    setEditedFields(prev => prev.map(f => f.id === id ? { ...f, ...patch } : f))
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const updated = await window.electronAPI.upsertFields(
+        objectId,
+        editedFields.map(({ id: _id, ...f }) => f)
+      )
+      onFieldsSaved(updated)
+      setEditMode(false)
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Save failed.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (fields.length === 0 && !editMode) {
     return (
       <div className="flex items-center justify-center h-40 text-gray-300 text-sm">
         No fields defined
@@ -133,51 +210,172 @@ function SchemaTab({ fields }: { fields: ObjectField[] }) {
     )
   }
 
+  // ── Edit mode ──────────────────────────────────────────────────────────────
+  if (editMode) {
+    return (
+      <div className="flex flex-col h-full">
+        {saveError && (
+          <div className="mx-4 mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">
+            {saveError}
+          </div>
+        )}
+        <div className="flex-1 overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 sticky top-0">
+              <tr>
+                {['#', 'Field Name', 'Description', 'Type', 'Picklist', 'Req'].map(h => (
+                  <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {editedFields.map((f, i) => (
+                <tr key={f.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-2 text-xs text-gray-400">{i + 1}</td>
+                  <td className="px-4 py-2">
+                    <span className="font-mono text-xs text-gray-700">{f.name}</span>
+                  </td>
+                  <td className="px-4 py-2">
+                    <input
+                      value={f.description ?? ''}
+                      onChange={e => updateField(f.id, { description: e.target.value || undefined })}
+                      className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      placeholder="Add description…"
+                    />
+                  </td>
+                  <td className="px-4 py-2">
+                    <select
+                      value={f.dataType}
+                      onChange={e => updateField(f.id, {
+                        dataType: e.target.value as typeof FIELD_TYPES[number],
+                        picklistId: e.target.value !== 'picklist' ? undefined : f.picklistId,
+                      })}
+                      className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+                    >
+                      {FIELD_TYPES.map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-4 py-2">
+                    {f.dataType === 'picklist' ? (
+                      <select
+                        value={f.picklistId ?? ''}
+                        onChange={e => updateField(f.id, { picklistId: e.target.value || undefined })}
+                        className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-purple-400 bg-white"
+                      >
+                        <option value="">— none —</option>
+                        {picklists.map(pl => (
+                          <option key={pl.id} value={pl.id}>{pl.name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-gray-300 text-xs">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2">
+                    <input
+                      type="checkbox"
+                      checked={f.isRequired}
+                      onChange={e => updateField(f.id, { isRequired: e.target.checked })}
+                      className="w-4 h-4 accent-blue-600 cursor-pointer"
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="border-t px-4 py-3 flex items-center justify-between shrink-0 bg-white">
+          <button
+            onClick={() => setEditMode(false)}
+            className="text-sm text-gray-500 hover:text-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors"
+          >
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── View mode ──────────────────────────────────────────────────────────────
   return (
-    <table className="w-full text-sm">
-      <thead className="bg-gray-50 sticky top-0">
-        <tr>
-          {['#', 'Field Name', 'Display Name', 'Type', 'Required'].map(h => (
-            <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-              {h}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-gray-100">
-        {fields.map((f, i) => (
-          <tr key={f.id} className="hover:bg-gray-50">
-            <td className="px-4 py-2.5 text-xs text-gray-400">{i + 1}</td>
-            <td className="px-4 py-2.5 font-mono text-xs text-gray-700">{f.name}</td>
-            <td className="px-4 py-2.5 text-xs text-gray-600">{f.displayName || '—'}</td>
-            <td className="px-4 py-2.5">
-              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${TYPE_COLORS[f.dataType] ?? 'bg-gray-100 text-gray-600'}`}>
-                {f.dataType}
-              </span>
-            </td>
-            <td className="px-4 py-2.5 text-xs">
-              {f.isRequired
-                ? <span className="text-red-500 font-medium">Yes</span>
-                : <span className="text-gray-300">No</span>}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 sticky top-0">
+            <tr>
+              {['#', 'Field Name', 'Description', 'Type', 'Required'].map(h => (
+                <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {fields.map((f, i) => (
+              <tr key={f.id} className="hover:bg-gray-50">
+                <td className="px-4 py-2.5 text-xs text-gray-400">{i + 1}</td>
+                <td className="px-4 py-2.5 font-mono text-xs text-gray-700">{f.name}</td>
+                <td className="px-4 py-2.5 text-xs text-gray-500 max-w-xs">
+                  {f.description
+                    ? <span title={f.description}>{f.description}</span>
+                    : <span className="text-gray-300">—</span>}
+                </td>
+                <td className="px-4 py-2.5">
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${TYPE_COLORS[f.dataType] ?? 'bg-gray-100 text-gray-600'}`}>
+                    {f.dataType}
+                  </span>
+                </td>
+                <td className="px-4 py-2.5 text-xs">
+                  {f.isRequired
+                    ? <span className="text-red-500 font-medium">Yes</span>
+                    : <span className="text-gray-300">No</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="border-t px-4 py-3 flex justify-end shrink-0 bg-white">
+        <button
+          onClick={enterEdit}
+          className="px-3 py-1.5 text-xs bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 font-medium"
+        >
+          ✏ Edit schema
+        </button>
+      </div>
+    </div>
   )
 }
 
 // ── Data preview tab ──────────────────────────────────────────────────────────
 
 function DataTab({
-  headers, rows, page, totalPages, onPage,
+  fields, rows, page, totalPages, onPage,
 }: {
-  headers: string[]
+  fields: ObjectField[]
   rows: Record<string, string>[]
   page: number
   totalPages: number
   onPage: (p: number) => void
 }) {
+  // Use field name as column key; show description as tooltip on header
+  const headers = fields.length > 0
+    ? fields.map(f => f.name)
+    : rows.length > 0 ? Object.keys(rows[0]) : []
+
+  const fieldByName = Object.fromEntries(fields.map(f => [f.name, f]))
+
   if (rows.length === 0) {
     return (
       <div className="flex items-center justify-center h-40 text-gray-300 text-sm">
@@ -193,8 +391,15 @@ function DataTab({
           <thead className="bg-gray-50 sticky top-0">
             <tr>
               {headers.map(h => (
-                <th key={h} className="text-left px-3 py-2.5 font-semibold text-gray-500 whitespace-nowrap border-r border-gray-100 last:border-0">
+                <th
+                  key={h}
+                  title={fieldByName[h]?.description}
+                  className="text-left px-3 py-2.5 font-semibold text-gray-500 whitespace-nowrap border-r border-gray-100 last:border-0 cursor-default"
+                >
                   {h}
+                  {fieldByName[h]?.description && (
+                    <span className="ml-1 text-gray-300 text-xs">ⓘ</span>
+                  )}
                 </th>
               ))}
             </tr>

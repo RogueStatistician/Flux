@@ -132,6 +132,11 @@ CREATE TABLE run_issues (
 );
 `
 
+/** Migration v1 → v2: adds description column to object_fields. */
+const MIGRATION_V2 = `
+ALTER TABLE object_fields ADD COLUMN description TEXT;
+`
+
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 /**
@@ -193,5 +198,8 @@ function applyMigrations(db: Database.Database): void {
     )
   }
 
-  // Future versions: if (currentVersion < 2) { db.exec(MIGRATION_V2); ... }
+  if (currentVersion < 2) {
+    db.exec(MIGRATION_V2)
+    db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '2')
+  }
 }
