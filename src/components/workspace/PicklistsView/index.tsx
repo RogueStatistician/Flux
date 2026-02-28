@@ -1,0 +1,254 @@
+import { useState, useEffect, useCallback } from 'react'
+import type { Picklist, PicklistSide } from '../../../types/index.js'
+import { PicklistDetailOverlay } from '../PicklistDetailOverlay.js'
+
+// ── Picklist Card ──────────────────────────────────────────────────────────────
+
+function PicklistCard({
+  picklist,
+  valueCount,
+  onClick,
+  onDelete,
+}: {
+  picklist: Picklist
+  valueCount: number
+  onClick: () => void
+  onDelete: () => void
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!confirmDelete) { setConfirmDelete(true); return }
+    await window.electronAPI.deletePicklist(picklist.id)
+    onDelete()
+  }
+
+  return (
+    <div
+      onClick={onClick}
+      className="group bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:border-purple-300 hover:shadow-sm transition-all relative"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-gray-800 truncate">{picklist.name}</p>
+          {picklist.description && (
+            <p className="text-xs text-gray-400 mt-0.5 truncate">{picklist.description}</p>
+          )}
+        </div>
+        <button
+          onClick={handleDelete}
+          onBlur={() => setConfirmDelete(false)}
+          className={[
+            'shrink-0 text-xs px-2 py-0.5 rounded transition-colors opacity-0 group-hover:opacity-100',
+            confirmDelete
+              ? 'bg-red-100 text-red-600 hover:bg-red-200'
+              : 'text-gray-400 hover:text-red-500',
+          ].join(' ')}
+        >
+          {confirmDelete ? 'Confirm' : '✕'}
+        </button>
+      </div>
+      <div className="mt-3 flex items-center gap-3 text-xs text-gray-400">
+        <span>{valueCount} value{valueCount !== 1 ? 's' : ''}</span>
+      </div>
+    </div>
+  )
+}
+
+// ── Column (source or target) ──────────────────────────────────────────────────
+
+function PicklistColumn({
+  side,
+  picklists,
+  valueCounts,
+  onSelect,
+  onDeleted,
+  onCreated,
+}: {
+  side: PicklistSide
+  picklists: Picklist[]
+  valueCounts: Record<string, number>
+  onSelect: (pl: Picklist) => void
+  onDeleted: (id: string) => void
+  onCreated: (pl: Picklist) => void
+}) {
+  const [showForm, setShowForm] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newDesc, setNewDesc] = useState('')
+  const [creating, setCreating] = useState(false)
+
+  const isSource = side === 'source'
+  const accent = isSource ? 'blue' : 'emerald'
+
+  const handleCreate = async () => {
+    if (!newName.trim()) return
+    setCreating(true)
+    try {
+      const pl = await window.electronAPI.createPicklist(side, newName.trim(), newDesc.trim() || undefined)
+      onCreated(pl)
+      setNewName('')
+      setNewDesc('')
+      setShowForm(false)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div className="flex-1 flex flex-col min-w-0 border-r last:border-r-0 border-gray-100">
+      {/* Column header */}
+      <div className={`px-5 py-3 border-b bg-${accent}-50/40 flex items-center justify-between shrink-0`}>
+        <div>
+          <p className={`text-xs font-bold text-${accent}-700 uppercase tracking-wide`}>
+            {isSource ? 'Source' : 'Target'} Picklists
+          </p>
+          <p className="text-xs text-gray-400 mt-0.5">{picklists.length} list{picklists.length !== 1 ? 's' : ''}</p>
+        </div>
+        <button
+          onClick={() => setShowForm(v => !v)}
+          className={`text-xs px-3 py-1.5 bg-${accent}-600 text-white rounded-lg hover:bg-${accent}-700 transition-colors font-medium`}
+        >
+          + New
+        </button>
+      </div>
+
+      {/* New picklist form */}
+      {showForm && (
+        <div className="px-5 py-3 border-b bg-white">
+          <input
+            autoFocus
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') setShowForm(false) }}
+            placeholder="Picklist name *"
+            className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <input
+            value={newDesc}
+            onChange={e => setNewDesc(e.target.value)}
+            placeholder="Description (optional)"
+            className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm mb-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setShowForm(false)} className="text-xs text-gray-500 hover:text-gray-700 px-2">Cancel</button>
+            <button
+              onClick={handleCreate}
+              disabled={!newName.trim() || creating}
+              className={`text-xs px-3 py-1 bg-${accent}-600 text-white rounded-lg disabled:opacity-40 hover:bg-${accent}-700`}
+            >
+              {creating ? '…' : 'Create'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Cards */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {picklists.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-40 text-center">
+            <p className="text-sm text-gray-300 font-medium">No {side} picklists</p>
+            <p className="text-xs text-gray-200 mt-1">Click "+ New" to create one</p>
+          </div>
+        ) : (
+          picklists.map(pl => (
+            <PicklistCard
+              key={pl.id}
+              picklist={pl}
+              valueCount={valueCounts[pl.id] ?? 0}
+              onClick={() => onSelect(pl)}
+              onDelete={() => onDeleted(pl.id)}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── PicklistsView ─────────────────────────────────────────────────────────────
+
+export function PicklistsView() {
+  const [picklists, setPicklists] = useState<Picklist[]>([])
+  const [valueCounts, setValueCounts] = useState<Record<string, number>>({})
+  const [loading, setLoading] = useState(true)
+  const [selected, setSelected] = useState<Picklist | null>(null)
+
+  const load = useCallback(async () => {
+    const all = await window.electronAPI.listPicklists()
+    setPicklists(all)
+    // Load value counts in parallel
+    const counts: Record<string, number> = {}
+    await Promise.all(all.map(async pl => {
+      const { values } = await window.electronAPI.getPicklist(pl.id)
+      counts[pl.id] = values.length
+    }))
+    setValueCounts(counts)
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const sourceLists = picklists.filter(p => p.side === 'source')
+  const targetLists = picklists.filter(p => p.side === 'target')
+
+  const handleCreated = (pl: Picklist) => {
+    setPicklists(prev => [...prev, pl])
+    setValueCounts(prev => ({ ...prev, [pl.id]: 0 }))
+  }
+
+  const handleDeleted = (id: string) => {
+    setPicklists(prev => prev.filter(p => p.id !== id))
+    if (selected?.id === id) setSelected(null)
+  }
+
+  const handleUpdated = (pl: Picklist, newCount: number) => {
+    setPicklists(prev => prev.map(p => p.id === pl.id ? pl : p))
+    setValueCounts(prev => ({ ...prev, [pl.id]: newCount }))
+  }
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Top bar */}
+      <div className="px-6 py-4 border-b bg-white shrink-0">
+        <p className="text-sm font-semibold text-gray-800">Picklists</p>
+        <p className="text-xs text-gray-400 mt-0.5">
+          Named value sets for source and target systems
+        </p>
+      </div>
+
+      {/* Two-column layout */}
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center text-gray-300 text-sm">Loading…</div>
+      ) : (
+        <div className="flex-1 flex overflow-hidden">
+          <PicklistColumn
+            side="source"
+            picklists={sourceLists}
+            valueCounts={valueCounts}
+            onSelect={setSelected}
+            onDeleted={handleDeleted}
+            onCreated={handleCreated}
+          />
+          <PicklistColumn
+            side="target"
+            picklists={targetLists}
+            valueCounts={valueCounts}
+            onSelect={setSelected}
+            onDeleted={handleDeleted}
+            onCreated={handleCreated}
+          />
+        </div>
+      )}
+
+      {/* Detail overlay */}
+      {selected && (
+        <PicklistDetailOverlay
+          picklist={selected}
+          onClose={() => setSelected(null)}
+          onUpdated={(pl, count) => handleUpdated(pl, count)}
+        />
+      )}
+    </div>
+  )
+}

@@ -1,0 +1,267 @@
+/**
+ * Objects IPC handlers — CRUD for data_objects + object_fields + source_rows.
+ * Also exposes schema inference (no DB writes) and row import.
+ */
+import { ipcMain } from 'electron'
+import { getDb } from '../db.js'
+import { parseFile, parseHeaders, inferSchema } from '../importer.js'
+
+// ── Row types (main-process side) ─────────────────────────────────────────────
+
+interface ObjectRow {
+  id: string
+  project_id: string
+  role: string
+  name: string
+  description: string | null
+  system_name: string | null
+  file_name: string | null
+  row_count: number | null
+  output_format: string
+  created_at: string
+  updated_at: string
+}
+
+interface FieldRow {
+  id: string
+  object_id: string
+  name: string
+  display_name: string | null
+  data_type: string
+  is_required: number
+  is_nullable: number
+  picklist_id: string | null
+  date_format: string | null
+  max_length: number | null
+  position: number
+  notes: string | null
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function rowToObject(r: ObjectRow) {
+  return {
+    id: r.id,
+    projectId: r.project_id,
+    role: r.role as 'source' | 'target',
+    name: r.name,
+    description: r.description ?? undefined,
+    systemName: r.system_name ?? undefined,
+    fileName: r.file_name ?? undefined,
+    rowCount: r.row_count ?? undefined,
+    outputFormat: r.output_format as 'xlsx' | 'csv',
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }
+}
+
+function rowToField(r: FieldRow) {
+  return {
+    id: r.id,
+    objectId: r.object_id,
+    name: r.name,
+    displayName: r.display_name ?? undefined,
+    dataType: r.data_type as import('../../src/types/index.js').FieldType,
+    isRequired: r.is_required === 1,
+    isNullable: r.is_nullable === 1,
+    picklistId: r.picklist_id ?? undefined,
+    dateFormat: r.date_format ?? undefined,
+    maxLength: r.max_length ?? undefined,
+    position: r.position,
+    notes: r.notes ?? undefined,
+  }
+}
+
+function getProjectId(): string {
+  const db = getDb()
+  const row = db.prepare('SELECT id FROM projects LIMIT 1').get() as { id: string } | undefined
+  if (!row) throw new Error('No project is open.')
+  return row.id
+}
+
+// ── Registration ──────────────────────────────────────────────────────────────
+
+export function registerObjectHandlers(): void {
+
+  /** Infer schema from an Excel/CSV file without touching the DB. */
+  ipcMain.handle('objects:inferSchema', async (_e, filePath: string) => {
+    const { headers, rows } = parseFile(filePath, 200)
+    const fields = inferSchema(headers, rows)
+    return { headers, fields }
+  })
+
+  /** Read only the headers from a file (for target template import). */
+  ipcMain.handle('objects:inferSchemaFromHeaders', async (_e, filePath: string) => {
+    const headers = parseHeaders(filePath)
+    const fields = inferSchema(headers, [])
+    return { headers, fields }
+  })
+
+  /** Create a new data object (source or target). */
+  ipcMain.handle(
+    'objects:create',
+    async (
+      _e,
+      role: 'source' | 'target',
+      name: string,
+      description?: string,
+      systemName?: string,
+      outputFormat: 'xlsx' | 'csv' = 'xlsx'
+    ) => {
+      const db = getDb()
+      const projectId = getProjectId()
+      const id = crypto.randomUUID()
+      const now = new Date().toISOString()
+
+      db.prepare(`
+        INSERT INTO data_objects
+          (id, project_id, role, name, description, system_name, output_format, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, projectId, role, name, description ?? null, systemName ?? null, outputFormat, now, now)
+
+      return rowToObject(
+        db.prepare('SELECT * FROM data_objects WHERE id = ?').get(id) as ObjectRow
+      )
+    }
+  )
+
+  /** List all data objects for the current project, optionally filtered by role. */
+  ipcMain.handle('objects:list', async (_e, role?: 'source' | 'target') => {
+    const db = getDb()
+    const projectId = getProjectId()
+    const rows = role
+      ? db.prepare('SELECT * FROM data_objects WHERE project_id = ? AND role = ? ORDER BY created_at ASC').all(projectId, role) as ObjectRow[]
+      : db.prepare('SELECT * FROM data_objects WHERE project_id = ? ORDER BY created_at ASC').all(projectId) as ObjectRow[]
+    return rows.map(rowToObject)
+  })
+
+  /** Get a single data object plus its field schema. */
+  ipcMain.handle('objects:get', async (_e, id: string) => {
+    const db = getDb()
+    const object = db.prepare('SELECT * FROM data_objects WHERE id = ?').get(id) as ObjectRow | undefined
+    if (!object) throw new Error(`Object ${id} not found.`)
+    const fields = db.prepare('SELECT * FROM object_fields WHERE object_id = ? ORDER BY position ASC').all(id) as FieldRow[]
+    return { object: rowToObject(object), fields: fields.map(rowToField) }
+  })
+
+  /** Update editable metadata on a data object. */
+  ipcMain.handle(
+    'objects:update',
+    async (
+      _e,
+      id: string,
+      updates: Partial<{ name: string; description: string; systemName: string; outputFormat: 'xlsx' | 'csv' }>
+    ) => {
+      const db = getDb()
+      const now = new Date().toISOString()
+      if (updates.name !== undefined)
+        db.prepare('UPDATE data_objects SET name = ?, updated_at = ? WHERE id = ?').run(updates.name, now, id)
+      if ('description' in updates)
+        db.prepare('UPDATE data_objects SET description = ?, updated_at = ? WHERE id = ?').run(updates.description ?? null, now, id)
+      if ('systemName' in updates)
+        db.prepare('UPDATE data_objects SET system_name = ?, updated_at = ? WHERE id = ?').run(updates.systemName ?? null, now, id)
+      if (updates.outputFormat !== undefined)
+        db.prepare('UPDATE data_objects SET output_format = ?, updated_at = ? WHERE id = ?').run(updates.outputFormat, now, id)
+      return rowToObject(db.prepare('SELECT * FROM data_objects WHERE id = ?').get(id) as ObjectRow)
+    }
+  )
+
+  /** Delete a data object (cascades to fields and source rows). */
+  ipcMain.handle('objects:delete', async (_e, id: string) => {
+    getDb().prepare('DELETE FROM data_objects WHERE id = ?').run(id)
+  })
+
+  /**
+   * Import rows from a file into an existing data object.
+   * Replaces any existing source_rows for that object.
+   */
+  ipcMain.handle('objects:importRows', async (_e, id: string, filePath: string) => {
+    const db = getDb()
+    const { rows } = parseFile(filePath)
+
+    const deleteRows = db.prepare('DELETE FROM source_rows WHERE object_id = ?')
+    const insertRow = db.prepare(
+      'INSERT INTO source_rows (object_id, row_index, data) VALUES (?, ?, ?)'
+    )
+    const updateCount = db.prepare(
+      'UPDATE data_objects SET row_count = ?, file_name = ?, updated_at = ? WHERE id = ?'
+    )
+
+    const fileName = filePath.split(/[\\/]/).pop() ?? filePath
+    const now = new Date().toISOString()
+
+    const importAll = db.transaction(() => {
+      deleteRows.run(id)
+      rows.forEach((row, i) => insertRow.run(id, i, JSON.stringify(row)))
+      updateCount.run(rows.length, fileName, now, id)
+    })
+    importAll()
+
+    return { rowCount: rows.length }
+  })
+
+  /** Get a paginated slice of source rows for a data object. */
+  ipcMain.handle('objects:getRows', async (_e, id: string, offset: number, limit: number) => {
+    const db = getDb()
+    const total = (db.prepare('SELECT COUNT(*) as c FROM source_rows WHERE object_id = ?').get(id) as { c: number }).c
+    const rows = db.prepare(
+      'SELECT data FROM source_rows WHERE object_id = ? ORDER BY row_index ASC LIMIT ? OFFSET ?'
+    ).all(id, limit, offset) as { data: string }[]
+    return { rows: rows.map(r => JSON.parse(r.data) as Record<string, string>), total }
+  })
+
+  /**
+   * Replace all fields for a data object.
+   * Fields are provided in display order; positions are assigned automatically.
+   */
+  ipcMain.handle(
+    'fields:upsert',
+    async (
+      _e,
+      objectId: string,
+      fields: Array<{
+        name: string
+        displayName?: string
+        dataType: string
+        isRequired: boolean
+        isNullable: boolean
+        dateFormat?: string
+        maxLength?: number
+        notes?: string
+      }>
+    ) => {
+      const db = getDb()
+      const del = db.prepare('DELETE FROM object_fields WHERE object_id = ?')
+      const ins = db.prepare(`
+        INSERT INTO object_fields
+          (id, object_id, name, display_name, data_type, is_required, is_nullable,
+           date_format, max_length, position, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+
+      const upsertAll = db.transaction(() => {
+        del.run(objectId)
+        fields.forEach((f, i) => {
+          ins.run(
+            crypto.randomUUID(),
+            objectId,
+            f.name,
+            f.displayName ?? null,
+            f.dataType,
+            f.isRequired ? 1 : 0,
+            f.isNullable ? 1 : 0,
+            f.dateFormat ?? null,
+            f.maxLength ?? null,
+            i,
+            f.notes ?? null
+          )
+        })
+      })
+      upsertAll()
+
+      return (
+        db.prepare('SELECT * FROM object_fields WHERE object_id = ? ORDER BY position ASC').all(objectId) as FieldRow[]
+      ).map(rowToField)
+    }
+  )
+}

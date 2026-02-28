@@ -17,11 +17,7 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@engine/*": ["src/engine/*"],
-      "@ingestion/*": ["src/ingestion/*"],
-      "@export/*": ["src/export/*"],
-      "@store/*": ["src/store/*"]
+      "@/*": ["src/*"]
     }
   },
   "include": ["src"],

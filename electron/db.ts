@@ -1,0 +1,197 @@
+/**
+ * Database layer — opens/closes a SQLite .flux project file and runs migrations.
+ *
+ * All access to better-sqlite3 stays in the main process (Node.js). The
+ * renderer communicates via typed IPC handlers in electron/ipc/.
+ */
+import Database from 'better-sqlite3'
+
+let _db: Database.Database | null = null
+
+// ── Schema DDL ────────────────────────────────────────────────────────────────
+
+/** Full schema applied on database version 0 → 1. */
+const MIGRATION_V1 = `
+CREATE TABLE projects (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  description TEXT,
+  client      TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE picklists (
+  id          TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  description TEXT,
+  side        TEXT NOT NULL CHECK(side IN ('source','target')),
+  created_at  TEXT NOT NULL
+);
+
+CREATE TABLE picklist_values (
+  id          TEXT PRIMARY KEY,
+  picklist_id TEXT NOT NULL REFERENCES picklists(id) ON DELETE CASCADE,
+  key         TEXT NOT NULL,
+  label       TEXT,
+  position    INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(picklist_id, key)
+);
+
+CREATE TABLE data_objects (
+  id            TEXT PRIMARY KEY,
+  project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  role          TEXT NOT NULL CHECK(role IN ('source','target')),
+  name          TEXT NOT NULL,
+  description   TEXT,
+  system_name   TEXT,
+  file_name     TEXT,
+  row_count     INTEGER,
+  output_format TEXT NOT NULL DEFAULT 'xlsx',
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE object_fields (
+  id           TEXT PRIMARY KEY,
+  object_id    TEXT NOT NULL REFERENCES data_objects(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  display_name TEXT,
+  data_type    TEXT NOT NULL CHECK(data_type IN ('string','integer','float','date','datetime','picklist')),
+  is_required  INTEGER NOT NULL DEFAULT 0,
+  is_nullable  INTEGER NOT NULL DEFAULT 1,
+  picklist_id  TEXT REFERENCES picklists(id),
+  date_format  TEXT,
+  max_length   INTEGER,
+  position     INTEGER NOT NULL,
+  notes        TEXT
+);
+
+CREATE TABLE source_rows (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  object_id TEXT NOT NULL REFERENCES data_objects(id) ON DELETE CASCADE,
+  row_index INTEGER NOT NULL,
+  data      TEXT NOT NULL
+);
+CREATE INDEX idx_source_rows_object ON source_rows(object_id);
+
+CREATE TABLE picklist_mappings (
+  id                 TEXT PRIMARY KEY,
+  project_id         TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name               TEXT NOT NULL,
+  source_picklist_id TEXT REFERENCES picklists(id),
+  target_picklist_id TEXT REFERENCES picklists(id),
+  created_at         TEXT NOT NULL
+);
+
+CREATE TABLE picklist_mapping_entries (
+  id         TEXT PRIMARY KEY,
+  mapping_id TEXT NOT NULL REFERENCES picklist_mappings(id) ON DELETE CASCADE,
+  source_key TEXT NOT NULL,
+  target_key TEXT NOT NULL
+);
+
+CREATE TABLE transformations (
+  id           TEXT PRIMARY KEY,
+  project_id   TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  description  TEXT,
+  canvas_state TEXT,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+
+CREATE TABLE field_mappings (
+  id                TEXT PRIMARY KEY,
+  transformation_id TEXT NOT NULL REFERENCES transformations(id) ON DELETE CASCADE,
+  target_object_id  TEXT NOT NULL REFERENCES data_objects(id),
+  target_field_id   TEXT NOT NULL REFERENCES object_fields(id),
+  rule_type         TEXT NOT NULL,
+  rule_config       TEXT NOT NULL,
+  notes             TEXT
+);
+
+CREATE TABLE runs (
+  id                TEXT PRIMARY KEY,
+  transformation_id TEXT NOT NULL REFERENCES transformations(id),
+  started_at        TEXT NOT NULL,
+  completed_at      TEXT,
+  status            TEXT NOT NULL CHECK(status IN ('running','completed','failed')),
+  stats             TEXT,
+  output_manifest   TEXT
+);
+
+CREATE TABLE run_issues (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id     TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  row_index  INTEGER,
+  field_name TEXT,
+  severity   TEXT NOT NULL CHECK(severity IN ('warning','error')),
+  message    TEXT NOT NULL
+);
+`
+
+// ── Lifecycle ─────────────────────────────────────────────────────────────────
+
+/**
+ * Open (or create) a .flux SQLite file and run any pending migrations.
+ * Throws if the file path is invalid or the DB is not a valid Flux project.
+ */
+export function openDatabase(filePath: string): void {
+  if (_db) {
+    _db.close()
+    _db = null
+  }
+  _db = new Database(filePath)
+  _db.pragma('journal_mode = WAL')
+  _db.pragma('foreign_keys = ON')
+  applyMigrations(_db)
+}
+
+/** Close the current database. Safe to call when no DB is open. */
+export function closeDatabase(): void {
+  if (_db) {
+    _db.close()
+    _db = null
+  }
+}
+
+/** Return the open database. Throws if no project is open. */
+export function getDb(): Database.Database {
+  if (!_db) throw new Error('No project is open.')
+  return _db
+}
+
+/** True when a project file is currently open. */
+export function isDatabaseOpen(): boolean {
+  return _db !== null
+}
+
+// ── Migrations ────────────────────────────────────────────────────────────────
+
+function applyMigrations(db: Database.Database): void {
+  // Ensure the _meta table exists
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS _meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `)
+
+  const row = db
+    .prepare('SELECT value FROM _meta WHERE key = ?')
+    .get('schema_version') as { value: string } | undefined
+
+  const currentVersion = row ? parseInt(row.value, 10) : 0
+
+  if (currentVersion < 1) {
+    db.exec(MIGRATION_V1)
+    db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run(
+      'schema_version',
+      '1'
+    )
+  }
+
+  // Future versions: if (currentVersion < 2) { db.exec(MIGRATION_V2); ... }
+}

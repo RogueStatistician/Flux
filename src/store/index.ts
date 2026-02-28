@@ -1,253 +1,38 @@
-/**
- * SF2WD Application State — Zustand store.
- *
- * Slice-based architecture:
- *  - sourceSlice  : the loaded source file and its parsed rows
- *  - profileSlice : the active mapping profile
- *  - resultSlice  : the current transformation result
- *  - uiSlice      : UI state (current step, loading flags, error messages)
- */
 import { create } from 'zustand'
-import { devtools } from 'zustand/middleware'
-import type { ParseResult } from '../engine/types.js'
-import type { TransformResult } from '../engine/types.js'
-import type { Profile } from '../engine/schema.js'
+import type { AppView, WorkspaceSection, ProjectMeta } from '../types/index.js'
 
-// ── Source slice ──────────────────────────────────────────────────────────────
+interface AppState {
+  // ── UI ──────────────────────────────────────────────────────────────────────
+  currentView: AppView
+  workspaceSection: WorkspaceSection
 
-export interface SourceState {
-  /** Path of the loaded source file (Electron only, null in web mode). */
-  filePath: string | null
-  /** Original filename (for display). */
-  fileName: string | null
-  /** Complete parse result including all rows and stats. */
-  parseResult: ParseResult | null
-  /** Whether the file is currently being parsed. */
-  isParsing: boolean
-  /** Error message from the last parse attempt. */
-  parseError: string | null
+  // ── Project ─────────────────────────────────────────────────────────────────
+  project: ProjectMeta | null
+
+  // ── Actions ─────────────────────────────────────────────────────────────────
+  setCurrentView: (view: AppView) => void
+  setWorkspaceSection: (section: WorkspaceSection) => void
+  openProject: (meta: ProjectMeta) => void
+  closeProject: () => void
+  updateProjectMeta: (fields: Partial<ProjectMeta>) => void
 }
 
-// ── Profile slice ─────────────────────────────────────────────────────────────
+export const useAppStore = create<AppState>((set) => ({
+  currentView: 'home',
+  workspaceSection: 'sources',
+  project: null,
 
-export interface ProfileState {
-  /** The active mapping profile. */
-  profile: Profile | null
-  /** Path on disk where the profile was loaded from. */
-  profilePath: string | null
-  /** Whether the profile has unsaved changes. */
-  isDirty: boolean
-  /** Error message from the last profile load/validation attempt. */
-  profileError: string | null
-}
+  setCurrentView: (view) => set({ currentView: view }),
 
-// ── Result slice ──────────────────────────────────────────────────────────────
+  setWorkspaceSection: (section) => set({ workspaceSection: section }),
 
-export interface ResultState {
-  /** The result of the last transformation run. */
-  transformResult: TransformResult | null
-  /** Whether a transformation is currently running. */
-  isTransforming: boolean
-  /** Current transformation progress (0–100). */
-  transformProgress: number
-  /** Error message from the last transform attempt. */
-  transformError: string | null
-}
+  openProject: (meta) => set({ project: meta, currentView: 'workspace' }),
 
-// ── UI slice ──────────────────────────────────────────────────────────────────
+  closeProject: () =>
+    set({ project: null, currentView: 'home', workspaceSection: 'sources' }),
 
-export type AppStep = 'load-source' | 'configure-mapping' | 'preview' | 'export'
-export type AppMode = 'migrate' | 'preset-builder'
-
-export interface UiState {
-  /** Current step in the multi-step workflow. */
-  currentStep: AppStep
-  /** Top-level application mode — migration workflow vs. visual preset builder. */
-  appMode: AppMode
-  /** Whether any global loading operation is in progress. */
-  isLoading: boolean
-  /** Global error message (for top-level error display). */
-  globalError: string | null
-  /** Row index currently selected in the preview grid (for detail panel). */
-  selectedRowIndex: number | null
-  /** Filter mode for the preview grid. */
-  previewFilter: 'all' | 'errors' | 'warnings'
-}
-
-// ── Combined store ────────────────────────────────────────────────────────────
-
-export interface AppStore {
-  // Source
-  source: SourceState
-  setSourceFile: (filePath: string | null, fileName: string | null) => void
-  setParseResult: (result: ParseResult) => void
-  setParseError: (error: string | null) => void
-  setIsParsing: (isParsing: boolean) => void
-  clearSource: () => void
-
-  // Profile
-  profileState: ProfileState
-  setProfile: (profile: Profile, profilePath: string | null) => void
-  setProfileError: (error: string | null) => void
-  markProfileDirty: () => void
-  clearProfile: () => void
-
-  // Result
-  result: ResultState
-  setTransformResult: (result: TransformResult) => void
-  setIsTransforming: (isTransforming: boolean) => void
-  setTransformProgress: (progress: number) => void
-  setTransformError: (error: string | null) => void
-  clearResult: () => void
-
-  // UI
-  ui: UiState
-  setCurrentStep: (step: AppStep) => void
-  setAppMode: (mode: AppMode) => void
-  setIsLoading: (isLoading: boolean) => void
-  setGlobalError: (error: string | null) => void
-  setSelectedRowIndex: (index: number | null) => void
-  setPreviewFilter: (filter: UiState['previewFilter']) => void
-}
-
-const initialSource: SourceState = {
-  filePath: null,
-  fileName: null,
-  parseResult: null,
-  isParsing: false,
-  parseError: null,
-}
-
-const initialProfileState: ProfileState = {
-  profile: null,
-  profilePath: null,
-  isDirty: false,
-  profileError: null,
-}
-
-const initialResult: ResultState = {
-  transformResult: null,
-  isTransforming: false,
-  transformProgress: 0,
-  transformError: null,
-}
-
-const initialUi: UiState = {
-  currentStep: 'load-source',
-  appMode: 'migrate',
-  isLoading: false,
-  globalError: null,
-  selectedRowIndex: null,
-  previewFilter: 'all',
-}
-
-export const useAppStore = create<AppStore>()(
-  devtools(
-    (set) => ({
-      // ── Source ──────────────────────────────────────────────────────────────
-      source: initialSource,
-
-      setSourceFile: (filePath, fileName) =>
-        set(state => ({
-          source: { ...state.source, filePath, fileName, parseError: null },
-        })),
-
-      setParseResult: (result) =>
-        set(state => ({
-          source: { ...state.source, parseResult: result, isParsing: false, parseError: null },
-        })),
-
-      setParseError: (error) =>
-        set(state => ({
-          source: { ...state.source, parseError: error, isParsing: false },
-        })),
-
-      setIsParsing: (isParsing) =>
-        set(state => ({
-          source: { ...state.source, isParsing },
-        })),
-
-      clearSource: () =>
-        set({ source: initialSource }),
-
-      // ── Profile ─────────────────────────────────────────────────────────────
-      profileState: initialProfileState,
-
-      setProfile: (profile, profilePath) =>
-        set({
-          profileState: {
-            profile,
-            profilePath,
-            isDirty: false,
-            profileError: null,
-          },
-        }),
-
-      setProfileError: (error) =>
-        set(state => ({
-          profileState: { ...state.profileState, profileError: error },
-        })),
-
-      markProfileDirty: () =>
-        set(state => ({
-          profileState: { ...state.profileState, isDirty: true },
-        })),
-
-      clearProfile: () =>
-        set({ profileState: initialProfileState }),
-
-      // ── Result ───────────────────────────────────────────────────────────────
-      result: initialResult,
-
-      setTransformResult: (result) =>
-        set({
-          result: {
-            transformResult: result,
-            isTransforming: false,
-            transformProgress: 100,
-            transformError: null,
-          },
-        }),
-
-      setIsTransforming: (isTransforming) =>
-        set(state => ({
-          result: { ...state.result, isTransforming },
-        })),
-
-      setTransformProgress: (progress) =>
-        set(state => ({
-          result: { ...state.result, transformProgress: progress },
-        })),
-
-      setTransformError: (error) =>
-        set(state => ({
-          result: { ...state.result, transformError: error, isTransforming: false },
-        })),
-
-      clearResult: () =>
-        set({ result: initialResult }),
-
-      // ── UI ───────────────────────────────────────────────────────────────────
-      ui: initialUi,
-
-      setCurrentStep: (step) =>
-        set(state => ({ ui: { ...state.ui, currentStep: step } })),
-
-      setAppMode: (mode) =>
-        set(state => ({ ui: { ...state.ui, appMode: mode } })),
-
-      setIsLoading: (isLoading) =>
-        set(state => ({ ui: { ...state.ui, isLoading } })),
-
-      setGlobalError: (error) =>
-        set(state => ({ ui: { ...state.ui, globalError: error } })),
-
-      setSelectedRowIndex: (index) =>
-        set(state => ({ ui: { ...state.ui, selectedRowIndex: index } })),
-
-      setPreviewFilter: (filter) =>
-        set(state => ({ ui: { ...state.ui, previewFilter: filter } })),
-    }),
-    { name: 'SF2WD' },
-  ),
-)
+  updateProjectMeta: (fields) =>
+    set((state) => ({
+      project: state.project ? { ...state.project, ...fields } : null,
+    })),
+}))

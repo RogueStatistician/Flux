@@ -17,36 +17,25 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             sourcemap: true,
+            rollupOptions: {
+              // Native modules must stay external — loaded by Electron at runtime
+              external: ['better-sqlite3'],
+            },
           },
         },
       },
-      {
-        entry: 'electron/preload.ts',
-        onstart(options) {
-          options.reload()
-        },
-        vite: {
-          build: {
-            outDir: 'dist-electron',
-            sourcemap: true,
-          },
-        },
-      },
+      // Preload is compiled separately by esbuild (see build:preload script)
+      // so that it can be output as true CJS, which Electron's preload
+      // context requires even when package.json has "type":"module".
     ]),
     renderer(),
   ],
+  server: {
+    open: false, // WSL: don't auto-open browser; Electron is the UI
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      '@engine': path.resolve(__dirname, './src/engine'),
-      '@ingestion': path.resolve(__dirname, './src/ingestion'),
-      '@export': path.resolve(__dirname, './src/export'),
-      '@store': path.resolve(__dirname, './src/store'),
     },
-  },
-  test: {
-    environment: 'node',
-    globals: true,
-    include: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
   },
 })
