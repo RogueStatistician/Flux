@@ -30,6 +30,7 @@ interface ObjectRow {
   name: string
   output_format: string
   template_header_row: number | null
+  template_data_start_row: number | null
   template_skip_columns: number | null
   template_file_path: string | null
 }
@@ -395,13 +396,17 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
     const templateFilePath = targetObj.template_file_path
     const headerRow = targetObj.template_header_row ?? 0
     const skipColumns = targetObj.template_skip_columns ?? 0
+    // firstDataRow defaults to headerRow + 1 when template_data_start_row is not set,
+    // preserving backward-compatible behaviour for Case A (header row = last preamble row).
+    // When set explicitly it can differ from headerRow (Case B: header row for field-name
+    // inference is earlier than the last preserved preamble row).
+    const firstDataRow = targetObj.template_data_start_row ?? (headerRow + 1)
     const useTemplate = format === 'xlsx' && !!templateFilePath && fs.existsSync(templateFilePath)
 
     if (format === 'xlsx' && useTemplate) {
       // ── Template-based output: preserve the original workbook structure ──────
-      // Load the original template, clear any existing data rows, then write
-      // transformed rows into the same cells so preamble rows and column
-      // offsets are retained exactly as uploaded.
+      // Load the original template, clear the data area, then write transformed
+      // rows so preamble rows and column offsets are retained exactly.
       const templateBuf = fs.readFileSync(templateFilePath!)
       const wb = XLSX.read(templateBuf, { raw: false, cellDates: false })
       const wsName = wb.SheetNames[0]
@@ -410,9 +415,8 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       // Decode the current sheet extent (fall back to a single cell if empty).
       const refStr = ws['!ref'] ?? 'A1'
       const sheetRange = XLSX.utils.decode_range(refStr)
-      const firstDataRow = headerRow + 1  // 0-based index of first data row
 
-      // Clear all cells in the data area (rows below the header row,
+      // Clear all cells in the data area (rows from firstDataRow onwards,
       // columns at or after skipColumns) so stale template data is removed.
       for (let r = firstDataRow; r <= sheetRange.e.r; r++) {
         for (let c = skipColumns; c <= sheetRange.e.c; c++) {
@@ -420,7 +424,7 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
         }
       }
 
-      // Write transformed rows into the cleared area.
+      // Write transformed rows starting at firstDataRow.
       outputRows.forEach((outRow, rowIdx) => {
         const r = firstDataRow + rowIdx
         targetFields.forEach((tf, colIdx) => {

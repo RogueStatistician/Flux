@@ -42,7 +42,7 @@ const electronAPI = {
     description?: string,
     systemName?: string,
     outputFormat?: 'xlsx' | 'csv',
-    templateConfig?: { headerRow?: number; skipColumns?: number; filePath?: string }
+    templateConfig?: { headerRow?: number; dataStartRow?: number; skipColumns?: number; filePath?: string }
   ) =>
     ipcRenderer.invoke('objects:create', role, name, description, systemName, outputFormat, templateConfig),
 

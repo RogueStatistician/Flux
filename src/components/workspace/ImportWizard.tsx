@@ -58,11 +58,26 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
   const isCsv = isCsvPath(filePath)
   const [separator, setSeparator] = useState(',')
   /**
-   * headerRow is 1-indexed (UI-friendly).
-   * Internally converted to 0-indexed skipRows when calling the backend.
+   * headerRow  — 1-indexed row that contains the column names used for field-
+   *              name inference and mapping.
+   * dataStartRow — 1-indexed row where transformed data begins in the output.
+   *              Defaults to headerRow + 1 and auto-follows headerRow changes
+   *              unless the user has set it independently.
    */
   const [headerRow, setHeaderRow] = useState(1)
+  const [dataStartRow, setDataStartRow] = useState(2)
+  const [dataStartRowLinked, setDataStartRowLinked] = useState(true) // follows headerRow
   const [skipColumns, setSkipColumns] = useState(0)
+
+  function handleHeaderRowChange(v: number) {
+    setHeaderRow(v)
+    if (dataStartRowLinked) setDataStartRow(v + 1)
+  }
+
+  function handleDataStartRowChange(v: number) {
+    setDataStartRow(v)
+    setDataStartRowLinked(false)
+  }
 
   // Picklists for the matching role side
   const [picklists, setPicklists] = useState<Picklist[]>([])
@@ -117,11 +132,11 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
     }
   }, [filePath, role, isCsv])
 
-  // Auto-load on mount
+  // Auto-load on mount — only schema/header-row options affect field inference
   useEffect(() => {
     loadSchema(separator, headerRow, skipColumns)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // Only once on mount; user re-triggers via button after changing layout options
+  }, []) // User re-triggers via button after changing layout options
 
   // ── Field editing helpers ─────────────────────────────────────────────────
 
@@ -157,10 +172,15 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
     setSaveError(null)
     try {
       // Build template config for target objects that were uploaded from a file.
-      const skipRows = Math.max(0, headerRow - 1)
+      // Convert 1-indexed UI values to 0-indexed for the backend.
+      const headerRow0 = Math.max(0, headerRow - 1)
+      const dataStartRow0 = Math.max(0, dataStartRow - 1)
       const templateConfig = (role === 'target' && filePath)
         ? {
-            headerRow: skipRows,   // backend expects 0-based
+            headerRow: headerRow0,
+            // Only store dataStartRow when it differs from the natural default
+            // (headerRow + 1) so older DB rows without the column still work.
+            dataStartRow: dataStartRow0 !== headerRow0 + 1 ? dataStartRow0 : undefined,
             skipColumns: skipColumns > 0 ? skipColumns : undefined,
             filePath,
           }
@@ -232,7 +252,10 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
               separator={separator}
               onSeparator={setSeparator}
               headerRow={headerRow}
-              onHeaderRow={setHeaderRow}
+              onHeaderRow={handleHeaderRowChange}
+              dataStartRow={dataStartRow}
+              onDataStartRow={handleDataStartRowChange}
+              dataStartRowLinked={dataStartRowLinked}
               skipColumns={skipColumns}
               onSkipColumns={setSkipColumns}
               onReInfer={() => loadSchema(separator, headerRow, skipColumns)}
@@ -294,6 +317,7 @@ function SchemaStep({
   role, hasFile, isCsv,
   separator, onSeparator,
   headerRow, onHeaderRow,
+  dataStartRow, onDataStartRow, dataStartRowLinked,
   skipColumns, onSkipColumns,
   onReInfer,
   loading, error, fields, picklists, onUpdateField, onAddField, onRemoveField,
@@ -303,6 +327,8 @@ function SchemaStep({
   isCsv: boolean
   separator: string; onSeparator: (v: string) => void
   headerRow: number; onHeaderRow: (v: number) => void
+  dataStartRow: number; onDataStartRow: (v: number) => void
+  dataStartRowLinked: boolean
   skipColumns: number; onSkipColumns: (v: number) => void
   onReInfer: () => void
   loading: boolean
@@ -342,7 +368,7 @@ function SchemaStep({
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1">
               Header row
-              <span className="ml-1 text-gray-400 font-normal">(row containing column names)</span>
+              <span className="ml-1 text-gray-400 font-normal">(row with column names)</span>
             </label>
             <input
               type="number"
@@ -353,6 +379,26 @@ function SchemaStep({
               className="w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
             />
           </div>
+          {role === 'target' && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">
+                Data starts at row
+                {dataStartRowLinked && (
+                  <span className="ml-1 text-gray-400 font-normal">(auto)</span>
+                )}
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={dataStartRow}
+                onChange={e => onDataStartRow(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                className={`w-20 border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+                  dataStartRowLinked ? 'border-gray-200 bg-gray-50 text-gray-400' : 'border-blue-300 bg-white'
+                }`}
+              />
+            </div>
+          )}
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1">
               Skip columns
@@ -373,12 +419,11 @@ function SchemaStep({
           >
             ↺ Re-read schema
           </button>
-          {role === 'target' && (headerRow > 1 || skipColumns > 0) && (
+          {role === 'target' && (dataStartRow > 1 || skipColumns > 0) && (
             <p className="w-full text-xs text-blue-600 bg-blue-50 rounded px-2 py-1">
-              The {headerRow > 1 ? `${headerRow - 1} preamble row${headerRow > 2 ? 's' : ''}` : ''}
-              {headerRow > 1 && skipColumns > 0 ? ' and ' : ''}
-              {skipColumns > 0 ? `${skipColumns} leading column${skipColumns > 1 ? 's' : ''}` : ''}
-              {' '}will be preserved unchanged in the output file.
+              Rows 1–{dataStartRow - 1} and
+              {skipColumns > 0 ? ` the first ${skipColumns} column${skipColumns > 1 ? 's' : ''}` : ' all columns'}
+              {' '}before column {skipColumns + 1} will be preserved unchanged in the output file.
             </p>
           )}
         </div>

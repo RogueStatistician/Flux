@@ -151,7 +151,18 @@ ALTER TABLE data_objects ADD COLUMN template_skip_columns  INTEGER DEFAULT 0;
 ALTER TABLE data_objects ADD COLUMN template_file_path     TEXT;
 `
 
-// ── Lifecycle ─────────────────────────────────────────────────────────────────
+/**
+ * Migration v3 → v4: decouples "where column names live" from "where data starts".
+ *
+ * template_data_start_row — 0-based index of the first row that should contain
+ *                           transformed data in the output file.  When NULL the
+ *                           engine falls back to template_header_row + 1, which
+ *                           preserves the behaviour of databases created before
+ *                           this migration.
+ */
+const MIGRATION_V4 = `
+ALTER TABLE data_objects ADD COLUMN template_data_start_row INTEGER DEFAULT NULL;
+`
 
 /**
  * Open (or create) a .flux SQLite file and run any pending migrations.
@@ -220,5 +231,10 @@ function applyMigrations(db: Database.Database): void {
   if (currentVersion < 3) {
     db.exec(MIGRATION_V3)
     db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '3')
+  }
+
+  if (currentVersion < 4) {
+    db.exec(MIGRATION_V4)
+    db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '4')
   }
 }

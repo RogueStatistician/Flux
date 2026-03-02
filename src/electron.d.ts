@@ -51,8 +51,16 @@ interface ElectronAPI {
     systemName?: string,
     outputFormat?: OutputFormat,
     templateConfig?: {
-      /** 0-based index of the row containing column headers (default 0). */
+      /** 0-based index of the row containing column headers. */
       headerRow?: number
+      /**
+       * 0-based index of the first data row in the output file.
+       * Defaults to headerRow + 1 when omitted (Case A).
+       * Set explicitly when the header row for field-name inference is different
+       * from the last preserved preamble row (Case B, e.g. Workday templates
+       * where column names are on row 1 but data starts on row 6).
+       */
+      dataStartRow?: number
       /** Number of leading columns to skip when reading/writing data (default 0). */
       skipColumns?: number
       /** Absolute path to the original template file for structure-preserving output. */
