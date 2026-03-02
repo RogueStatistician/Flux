@@ -29,6 +29,9 @@ interface ObjectRow {
   id: string
   name: string
   output_format: string
+  template_header_row: number | null
+  template_skip_columns: number | null
+  template_file_path: string | null
 }
 
 interface ObjectFieldRow {
@@ -389,7 +392,55 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
     const ext = format === 'xlsx' ? '.xlsx' : '.csv'
     const outFilePath = path.join(tempDir, `${targetObjectId}${ext}`)
 
-    if (format === 'xlsx') {
+    const templateFilePath = targetObj.template_file_path
+    const headerRow = targetObj.template_header_row ?? 0
+    const skipColumns = targetObj.template_skip_columns ?? 0
+    const useTemplate = format === 'xlsx' && !!templateFilePath && fs.existsSync(templateFilePath)
+
+    if (format === 'xlsx' && useTemplate) {
+      // ── Template-based output: preserve the original workbook structure ──────
+      // Load the original template, clear any existing data rows, then write
+      // transformed rows into the same cells so preamble rows and column
+      // offsets are retained exactly as uploaded.
+      const templateBuf = fs.readFileSync(templateFilePath!)
+      const wb = XLSX.read(templateBuf, { raw: false, cellDates: false })
+      const wsName = wb.SheetNames[0]
+      const ws = wb.Sheets[wsName]
+
+      // Decode the current sheet extent (fall back to a single cell if empty).
+      const refStr = ws['!ref'] ?? 'A1'
+      const sheetRange = XLSX.utils.decode_range(refStr)
+      const firstDataRow = headerRow + 1  // 0-based index of first data row
+
+      // Clear all cells in the data area (rows below the header row,
+      // columns at or after skipColumns) so stale template data is removed.
+      for (let r = firstDataRow; r <= sheetRange.e.r; r++) {
+        for (let c = skipColumns; c <= sheetRange.e.c; c++) {
+          delete ws[XLSX.utils.encode_cell({ r, c })]
+        }
+      }
+
+      // Write transformed rows into the cleared area.
+      outputRows.forEach((outRow, rowIdx) => {
+        const r = firstDataRow + rowIdx
+        targetFields.forEach((tf, colIdx) => {
+          const c = skipColumns + colIdx
+          const value = outRow[tf.name] ?? ''
+          ws[XLSX.utils.encode_cell({ r, c })] = { v: value, t: 's' }
+        })
+      })
+
+      // Expand the sheet range to cover all written rows/columns.
+      const lastDataRow = firstDataRow + outputRows.length - 1
+      const lastDataCol = skipColumns + targetFields.length - 1
+      sheetRange.e.r = Math.max(sheetRange.e.r, lastDataRow)
+      sheetRange.e.c = Math.max(sheetRange.e.c, lastDataCol)
+      ws['!ref'] = XLSX.utils.encode_range(sheetRange)
+
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+      fs.writeFileSync(outFilePath, buf)
+    } else if (format === 'xlsx') {
+      // ── Standard from-scratch XLSX output ────────────────────────────────────
       const ws = XLSX.utils.json_to_sheet(outputRows)
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, targetObj.name.slice(0, 31))

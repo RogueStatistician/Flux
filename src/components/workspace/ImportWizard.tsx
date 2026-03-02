@@ -4,8 +4,15 @@
  * Sources:  file → infer schema → edit schema → metadata → create + import rows
  * Targets:  file (headers only) OR manual → edit/build schema → metadata → create
  *
- * CSV import: user can set a custom column separator and how many header rows to skip
- * (needed for SAP files that ship with two header rows).
+ * Layout options (all file types):
+ *   • Header row    — 1-based row number that contains column names.
+ *   • Skip columns  — number of leading columns to ignore when reading/writing data.
+ * These are particularly useful for Workday templates, which ship with several
+ * metadata rows above the actual header and sometimes fixed columns on the left.
+ * The engine uses this information to preserve the preamble rows and column
+ * offsets so the output file matches the input template structure exactly.
+ *
+ * CSV import: additionally allows a custom column separator.
  * Picklist fields: user can reference which picklist the field maps to.
  */
 import { useState, useEffect, useCallback } from 'react'
@@ -47,10 +54,15 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
   const [loadingSchema, setLoadingSchema] = useState(false)
   const [schemaError, setSchemaError] = useState<string | null>(null)
 
-  // CSV import options
+  // File layout options
   const isCsv = isCsvPath(filePath)
   const [separator, setSeparator] = useState(',')
-  const [skipRows, setSkipRows] = useState(0)
+  /**
+   * headerRow is 1-indexed (UI-friendly).
+   * Internally converted to 0-indexed skipRows when calling the backend.
+   */
+  const [headerRow, setHeaderRow] = useState(1)
+  const [skipColumns, setSkipColumns] = useState(0)
 
   // Picklists for the matching role side
   const [picklists, setPicklists] = useState<Picklist[]>([])
@@ -72,14 +84,17 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
 
   // ── Schema loading ─────────────────────────────────────────────────────────
 
-  const loadSchema = useCallback(async (sep: string, skip: number) => {
+  const loadSchema = useCallback(async (sep: string, hRow: number, skipCols: number) => {
     if (!filePath) return
     setLoadingSchema(true)
     setSchemaError(null)
     try {
+      // Convert 1-indexed headerRow to 0-indexed skipRows for the backend.
+      const skipRows = Math.max(0, hRow - 1)
       const opts = {
         ...(isCsv && sep !== ',' ? { separator: sep } : {}),
-        ...(skip > 0 ? { skipRows: skip } : {}),
+        ...(skipRows > 0 ? { skipRows } : {}),
+        ...(skipCols > 0 ? { skipColumns: skipCols } : {}),
       }
       const hasOpts = Object.keys(opts).length > 0
       const inferFn = role === 'target'
@@ -104,9 +119,9 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
 
   // Auto-load on mount
   useEffect(() => {
-    loadSchema(separator, skipRows)
+    loadSchema(separator, headerRow, skipColumns)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // Only once on mount; user re-triggers via button after changing CSV options
+  }, []) // Only once on mount; user re-triggers via button after changing layout options
 
   // ── Field editing helpers ─────────────────────────────────────────────────
 
@@ -141,10 +156,21 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
     setStep('saving')
     setSaveError(null)
     try {
+      // Build template config for target objects that were uploaded from a file.
+      const skipRows = Math.max(0, headerRow - 1)
+      const templateConfig = (role === 'target' && filePath)
+        ? {
+            headerRow: skipRows,   // backend expects 0-based
+            skipColumns: skipColumns > 0 ? skipColumns : undefined,
+            filePath,
+          }
+        : undefined
+
       const object = await window.electronAPI.createObject(
         role, name.trim(), description.trim() || undefined,
         systemName.trim() || undefined,
-        role === 'target' ? outputFormat : 'xlsx'
+        role === 'target' ? outputFormat : 'xlsx',
+        templateConfig
       )
 
       if (fields.length > 0) {
@@ -158,6 +184,7 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
         const opts = {
           ...(isCsv && separator !== ',' ? { separator } : {}),
           ...(skipRows > 0 ? { skipRows } : {}),
+          ...(skipColumns > 0 ? { skipColumns } : {}),
         }
         await window.electronAPI.importRows(
           object.id, filePath,
@@ -199,12 +226,16 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
         <div className="flex-1 overflow-y-auto p-6">
           {step === 'schema' && (
             <SchemaStep
+              role={role}
+              hasFile={!!filePath}
               isCsv={isCsv}
               separator={separator}
               onSeparator={setSeparator}
-              skipRows={skipRows}
-              onSkipRows={setSkipRows}
-              onReInfer={() => loadSchema(separator, skipRows)}
+              headerRow={headerRow}
+              onHeaderRow={setHeaderRow}
+              skipColumns={skipColumns}
+              onSkipColumns={setSkipColumns}
+              onReInfer={() => loadSchema(separator, headerRow, skipColumns)}
               loading={loadingSchema}
               error={schemaError}
               fields={fields}
@@ -260,12 +291,19 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
 // ── Schema step ───────────────────────────────────────────────────────────────
 
 function SchemaStep({
-  isCsv, separator, onSeparator, skipRows, onSkipRows, onReInfer,
+  role, hasFile, isCsv,
+  separator, onSeparator,
+  headerRow, onHeaderRow,
+  skipColumns, onSkipColumns,
+  onReInfer,
   loading, error, fields, picklists, onUpdateField, onAddField, onRemoveField,
 }: {
+  role: ObjectRole
+  hasFile: boolean
   isCsv: boolean
   separator: string; onSeparator: (v: string) => void
-  skipRows: number; onSkipRows: (v: number) => void
+  headerRow: number; onHeaderRow: (v: number) => void
+  skipColumns: number; onSkipColumns: (v: number) => void
   onReInfer: () => void
   loading: boolean
   error: string | null
@@ -286,38 +324,65 @@ function SchemaStep({
 
   return (
     <div>
-      {/* CSV / Excel import options */}
-      <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-100 flex flex-wrap items-end gap-4">
-        {isCsv && (
+      {/* File layout options — shown whenever a file was provided */}
+      {hasFile && (
+        <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-100 flex flex-wrap items-end gap-4">
+          {isCsv && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Column separator</label>
+              <input
+                value={separator}
+                onChange={e => onSeparator(e.target.value)}
+                maxLength={3}
+                className="w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 font-mono"
+                placeholder=","
+              />
+            </div>
+          )}
           <div>
-            <label className="block text-xs font-semibold text-gray-500 mb-1">Column separator</label>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">
+              Header row
+              <span className="ml-1 text-gray-400 font-normal">(row containing column names)</span>
+            </label>
             <input
-              value={separator}
-              onChange={e => onSeparator(e.target.value)}
-              maxLength={3}
-              className="w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 font-mono"
-              placeholder=","
+              type="number"
+              min={1}
+              max={20}
+              value={headerRow}
+              onChange={e => onHeaderRow(Math.max(1, parseInt(e.target.value, 10) || 1))}
+              className="w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
             />
           </div>
-        )}
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 mb-1">Skip header rows</label>
-          <input
-            type="number"
-            min={0}
-            max={5}
-            value={skipRows}
-            onChange={e => onSkipRows(Math.max(0, parseInt(e.target.value, 10) || 0))}
-            className="w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
-          />
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">
+              Skip columns
+              <span className="ml-1 text-gray-400 font-normal">(leading columns to ignore)</span>
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={20}
+              value={skipColumns}
+              onChange={e => onSkipColumns(Math.max(0, parseInt(e.target.value, 10) || 0))}
+              className="w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </div>
+          <button
+            onClick={onReInfer}
+            className="px-3 py-1 text-xs bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 font-medium"
+          >
+            ↺ Re-read schema
+          </button>
+          {role === 'target' && (headerRow > 1 || skipColumns > 0) && (
+            <p className="w-full text-xs text-blue-600 bg-blue-50 rounded px-2 py-1">
+              The {headerRow > 1 ? `${headerRow - 1} preamble row${headerRow > 2 ? 's' : ''}` : ''}
+              {headerRow > 1 && skipColumns > 0 ? ' and ' : ''}
+              {skipColumns > 0 ? `${skipColumns} leading column${skipColumns > 1 ? 's' : ''}` : ''}
+              {' '}will be preserved unchanged in the output file.
+            </p>
+          )}
         </div>
-        <button
-          onClick={onReInfer}
-          className="px-3 py-1 text-xs bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 font-medium"
-        >
-          ↺ Re-infer schema
-        </button>
-      </div>
+      )}
 
       {error && (
         <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">

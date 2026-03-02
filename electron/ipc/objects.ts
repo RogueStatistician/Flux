@@ -18,6 +18,9 @@ interface ObjectRow {
   file_name: string | null
   row_count: number | null
   output_format: string
+  template_header_row: number | null
+  template_skip_columns: number | null
+  template_file_path: string | null
   created_at: string
   updated_at: string
 }
@@ -50,6 +53,9 @@ function rowToObject(r: ObjectRow) {
     fileName: r.file_name ?? undefined,
     rowCount: r.row_count ?? undefined,
     outputFormat: r.output_format as 'xlsx' | 'csv',
+    templateHeaderRow: r.template_header_row ?? undefined,
+    templateSkipColumns: r.template_skip_columns ?? undefined,
+    templateFilePath: r.template_file_path ?? undefined,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   }
@@ -106,7 +112,15 @@ export function registerObjectHandlers(): void {
       name: string,
       description?: string,
       systemName?: string,
-      outputFormat: 'xlsx' | 'csv' = 'xlsx'
+      outputFormat: 'xlsx' | 'csv' = 'xlsx',
+      templateConfig?: {
+        /** 0-based index of the header row (default 0). */
+        headerRow?: number
+        /** Number of leading columns to skip (default 0). */
+        skipColumns?: number
+        /** Absolute path to the template file for structure-preserving output. */
+        filePath?: string
+      }
     ) => {
       const db = getDb()
       const projectId = getProjectId()
@@ -115,9 +129,18 @@ export function registerObjectHandlers(): void {
 
       db.prepare(`
         INSERT INTO data_objects
-          (id, project_id, role, name, description, system_name, output_format, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, projectId, role, name, description ?? null, systemName ?? null, outputFormat, now, now)
+          (id, project_id, role, name, description, system_name, output_format,
+           template_header_row, template_skip_columns, template_file_path,
+           created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id, projectId, role, name,
+        description ?? null, systemName ?? null, outputFormat,
+        templateConfig?.headerRow ?? null,
+        templateConfig?.skipColumns ?? null,
+        templateConfig?.filePath ?? null,
+        now, now
+      )
 
       return rowToObject(
         db.prepare('SELECT * FROM data_objects WHERE id = ?').get(id) as ObjectRow

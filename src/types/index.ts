@@ -59,6 +59,12 @@ export interface DataObject {
   fileName?: string
   rowCount?: number
   outputFormat: OutputFormat
+  /** 0-based row index that contains column headers (target templates). */
+  templateHeaderRow?: number
+  /** Number of leading columns to skip when reading/writing data (target templates). */
+  templateSkipColumns?: number
+  /** Absolute path to the uploaded template file; used to preserve layout on output. */
+  templateFilePath?: string
   createdAt: string
   updatedAt: string
 }
