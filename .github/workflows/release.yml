@@ -24,21 +24,21 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             eb_flag: --linux
-            artifact_name: sf2wd-linux
+            artifact_name: flux-linux
             artifact_path: release/*.AppImage
 
           # Windows → portable .exe (no installer, no admin rights required)
           - os: windows-latest
             platform: win
             eb_flag: --win
-            artifact_name: sf2wd-windows
+            artifact_name: flux-windows
             artifact_path: release/*.exe
 
           # macOS → universal .zip (Intel + Apple Silicon in one binary)
           - os: macos-latest
             platform: mac
             eb_flag: --mac
-            artifact_name: sf2wd-macos
+            artifact_name: flux-macos
             artifact_path: release/*.zip
 
     runs-on: ${{ matrix.os }}
@@ -56,11 +56,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # vite-plugin-electron compiles electron/main.ts + electron/preload.ts
-      # into dist-electron/ as part of the Vite build, so a single step covers
-      # both the renderer bundle and the Electron main/preload compilation.
-      - name: Build renderer + Electron main/preload
+      # vite-plugin-electron compiles electron/main.ts into dist-electron/
+      # as part of the Vite build. The preload MUST be compiled separately
+      # with esbuild so it outputs true CJS (required by Electron contextBridge
+      # even when package.json has "type":"module").
+      - name: Build renderer + Electron main
         run: npm run build:renderer
+
+      - name: Build Electron preload (CJS)
+        run: npm run build:preload
 
       # Run electron-builder with the platform flag from the matrix.
       # electron-builder reads Win/Mac/Linux config from the "build" key in
