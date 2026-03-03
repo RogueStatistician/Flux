@@ -57,7 +57,11 @@ export function parseFile(
   options?: ParseOptions
 ): { headers: string[]; rows: Record<string, string>[] } {
   const buf = fs.readFileSync(filePath)
-  const readOpts: XLSX.ParsingOptions = { raw: false, cellDates: false }
+  // For CSV/TSV files there are no embedded cell-format strings, so raw: false
+  // causes SheetJS to auto-interpret values (e.g. "01/01/1900" → "1/2/00").
+  // Use raw: true for plain-text formats to preserve literal cell text.
+  const isCsv = /\.(csv|tsv|txt)$/i.test(filePath)
+  const readOpts: XLSX.ParsingOptions = { raw: isCsv, cellDates: false }
   if (options?.separator) readOpts.FS = options.separator
   const workbook = XLSX.read(buf, readOpts)
   const sheet = workbook.Sheets[workbook.SheetNames[0]]

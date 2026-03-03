@@ -102,6 +102,7 @@ interface ElectronAPI {
   createFieldMapping(transformationId: string, targetObjectId: string, targetFieldId: string, ruleType: string, ruleConfig: string, notes?: string): Promise<FieldMapping>
   updateFieldMapping(id: string, updates: Partial<{ ruleType: string; ruleConfig: string; notes: string }>): Promise<FieldMapping>
   deleteFieldMapping(id: string): Promise<void>
+  deleteFieldMappingsByTarget(transformationId: string, targetObjectId: string): Promise<void>
   getFieldMappings(transformationId: string): Promise<FieldMapping[]>
 
   // ── Runs & export ──────────────────────────────────────────────────────────

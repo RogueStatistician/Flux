@@ -285,12 +285,31 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
   // ── Node / edge change handlers ────────────────────────────────────────────
 
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
+    // Before applying changes, detect mapOperator nodes being removed via Delete key.
+    // Their field_mappings must be purged from the DB so the engine won't output them.
+    const removedMapNodeIds = changes
+      .filter(c => c.type === 'remove')
+      .map(c => c.id)
+      .filter(id => nodesRef.current.find(n => n.id === id)?.type === 'mapOperator')
+
+    for (const nodeId of removedMapNodeIds) {
+      const node = nodesRef.current.find(n => n.id === nodeId)
+      const targetObjectId = (node?.data as Record<string, unknown> | undefined)?.targetObjectId as string | undefined
+      if (targetObjectId) {
+        window.electronAPI?.deleteFieldMappingsByTarget(transformationId, targetObjectId)
+          .then(() => {
+            setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId))
+          })
+          .catch(() => {})
+      }
+    }
+
     setNodes(nds => {
       const updated = applyNodeChanges(changes, nds)
       scheduleSave(updated, edgesRef.current)
       return updated
     })
-  }, [scheduleSave])
+  }, [scheduleSave, transformationId])
 
   const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
     setEdges(eds => {
@@ -369,6 +388,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
     const isOnCanvas = nodesRef.current.some(n => n.id === tgtNodeId)
 
     if (isOnCanvas) {
+      // Remove canvas nodes + edges
       setNodes(nds => {
         const updated = nds.filter(n => n.id !== tgtNodeId && n.id !== mapNodeId)
         scheduleSave(updated, edgesRef.current)
@@ -382,6 +402,10 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
         scheduleSave(nodesRef.current, updated)
         return updated
       })
+      // Delete field mapping rules from the DB so the engine won't output this target
+      window.electronAPI?.deleteFieldMappingsByTarget(transformationId, obj.id).then(() => {
+        setFieldMappings(prev => prev.filter(m => m.targetObjectId !== obj.id))
+      }).catch(() => {})
     } else {
       const tgtCount = nodesRef.current.filter(n => n.type === 'targetObject').length
       const y = 80 + tgtCount * 150

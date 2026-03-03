@@ -136,6 +136,9 @@ const electronAPI = {
   deleteFieldMapping: (id: string) =>
     ipcRenderer.invoke('transformations:deleteFieldMapping', id),
 
+  deleteFieldMappingsByTarget: (transformationId: string, targetObjectId: string) =>
+    ipcRenderer.invoke('transformations:deleteFieldMappingsByTarget', transformationId, targetObjectId),
+
   getFieldMappings: (transformationId: string) =>
     ipcRenderer.invoke('transformations:getFieldMappings', transformationId),
 

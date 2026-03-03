@@ -201,6 +201,7 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
       }
 
       if (role === 'source' && filePath) {
+        const skipRows = Math.max(0, headerRow - 1)
         const opts = {
           ...(isCsv && separator !== ',' ? { separator } : {}),
           ...(skipRows > 0 ? { skipRows } : {}),

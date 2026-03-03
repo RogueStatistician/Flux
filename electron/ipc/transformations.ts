@@ -120,9 +120,14 @@ export function registerTransformationHandlers(): void {
     db.prepare('UPDATE transformations SET canvas_state = ?, updated_at = ? WHERE id = ?').run(canvasState, now, id)
   })
 
-  /** Delete a transformation (cascades to field_mappings). */
+  /** Delete a transformation and all associated data. */
   ipcMain.handle('transformations:delete', async (_e, id: string) => {
-    getDb().prepare('DELETE FROM transformations WHERE id = ?').run(id)
+    const db = getDb()
+    // runs.transformation_id has no ON DELETE CASCADE, so delete manually.
+    // run_issues.run_id does CASCADE, so those are cleaned up automatically.
+    db.prepare('DELETE FROM runs WHERE transformation_id = ?').run(id)
+    // field_mappings has ON DELETE CASCADE, but this also handles any stragglers.
+    db.prepare('DELETE FROM transformations WHERE id = ?').run(id)
   })
 
   // ── Field mapping rules ──────────────────────────────────────────────────────
@@ -176,6 +181,13 @@ export function registerTransformationHandlers(): void {
   /** Delete a single field mapping rule by id. */
   ipcMain.handle('transformations:deleteFieldMapping', async (_e, id: string) => {
     getDb().prepare('DELETE FROM field_mappings WHERE id = ?').run(id)
+  })
+
+  /** Delete ALL field mapping rules for a given target object in a transformation. */
+  ipcMain.handle('transformations:deleteFieldMappingsByTarget', async (_e, transformationId: string, targetObjectId: string) => {
+    getDb().prepare(
+      'DELETE FROM field_mappings WHERE transformation_id = ? AND target_object_id = ?'
+    ).run(transformationId, targetObjectId)
   })
 
   /** Get all field mapping rules for a transformation. */
