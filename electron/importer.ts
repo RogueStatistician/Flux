@@ -20,8 +20,17 @@ export interface InferredField {
 export interface ParseOptions {
   /** Column separator for CSV files (default: auto-detected by SheetJS). */
   separator?: string
-  /** Number of rows to skip before the header row (default: 0). */
+  /**
+   * 0-based index of the row that contains column headers (default: 0).
+   * All rows before this index are treated as preamble and are ignored during
+   * schema inference / row import (but preserved in template-based output).
+   */
   skipRows?: number
+  /**
+   * Number of leading columns to skip (default: 0).
+   * Columns to the left of this offset are excluded from headers and row data.
+   */
+  skipColumns?: number
 }
 
 // ── Date pattern library ──────────────────────────────────────────────────────
@@ -59,9 +68,11 @@ export function parseFile(
   })
 
   const headerRowIndex = options?.skipRows ?? 0
+  const startCol = options?.skipColumns ?? 0
   if (raw.length <= headerRowIndex) return { headers: [], rows: [] }
 
   const headers = (raw[headerRowIndex] as unknown[])
+    .slice(startCol)
     .map(h => String(h ?? '').trim())
     .filter(Boolean)
 
@@ -71,7 +82,7 @@ export function parseFile(
   const rows = raw.slice(headerRowIndex + 1, end).map(row => {
     const r = row as unknown[]
     const obj: Record<string, string> = {}
-    headers.forEach((h, i) => { obj[h] = String(r[i] ?? '') })
+    headers.forEach((h, i) => { obj[h] = String(r[startCol + i] ?? '') })
     return obj
   })
 

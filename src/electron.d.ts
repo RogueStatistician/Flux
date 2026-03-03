@@ -42,14 +42,36 @@ interface ElectronAPI {
   deleteProject(): Promise<void>
 
   // ── Objects & Fields ───────────────────────────────────────────────────────
-  inferSchema(filePath: string, options?: { separator?: string; skipRows?: number }): Promise<{ headers: string[]; fields: InferredField[] }>
-  inferSchemaFromHeaders(filePath: string, options?: { separator?: string; skipRows?: number }): Promise<{ headers: string[]; fields: InferredField[] }>
-  createObject(role: ObjectRole, name: string, description?: string, systemName?: string, outputFormat?: OutputFormat): Promise<DataObject>
+  inferSchema(filePath: string, options?: { separator?: string; skipRows?: number; skipColumns?: number }): Promise<{ headers: string[]; fields: InferredField[] }>
+  inferSchemaFromHeaders(filePath: string, options?: { separator?: string; skipRows?: number; skipColumns?: number }): Promise<{ headers: string[]; fields: InferredField[] }>
+  createObject(
+    role: ObjectRole,
+    name: string,
+    description?: string,
+    systemName?: string,
+    outputFormat?: OutputFormat,
+    templateConfig?: {
+      /** 0-based index of the row containing column headers. */
+      headerRow?: number
+      /**
+       * 0-based index of the first data row in the output file.
+       * Defaults to headerRow + 1 when omitted (Case A).
+       * Set explicitly when the header row for field-name inference is different
+       * from the last preserved preamble row (Case B, e.g. Workday templates
+       * where column names are on row 1 but data starts on row 6).
+       */
+      dataStartRow?: number
+      /** Number of leading columns to skip when reading/writing data (default 0). */
+      skipColumns?: number
+      /** Absolute path to the original template file for structure-preserving output. */
+      filePath?: string
+    }
+  ): Promise<DataObject>
   listObjects(role?: ObjectRole): Promise<DataObject[]>
   getObject(id: string): Promise<{ object: DataObject; fields: ObjectField[] }>
   updateObject(id: string, updates: Partial<{ name: string; description: string; systemName: string; outputFormat: OutputFormat }>): Promise<DataObject>
   deleteObject(id: string): Promise<void>
-  importRows(id: string, filePath: string, options?: { separator?: string; skipRows?: number }): Promise<{ rowCount: number }>
+  importRows(id: string, filePath: string, options?: { separator?: string; skipRows?: number; skipColumns?: number }): Promise<{ rowCount: number }>
   getRows(id: string, offset: number, limit: number): Promise<{ rows: Record<string, string>[]; total: number }>
   upsertFields(objectId: string, fields: Omit<ObjectField, 'id' | 'objectId' | 'position'>[]): Promise<ObjectField[]>
 

@@ -59,6 +59,19 @@ export interface DataObject {
   fileName?: string
   rowCount?: number
   outputFormat: OutputFormat
+  /** 0-based row index that contains column headers (target templates). */
+  templateHeaderRow?: number
+  /**
+   * 0-based row index where transformed data is written in the output file.
+   * When absent the engine falls back to templateHeaderRow + 1.
+   * Setting this independently allows the header row (for field-name inference)
+   * to differ from the last preamble row (e.g. header on row 1, data from row 6).
+   */
+  templateDataStartRow?: number
+  /** Number of leading columns to skip when reading/writing data (target templates). */
+  templateSkipColumns?: number
+  /** Absolute path to the uploaded template file; used to preserve layout on output. */
+  templateFilePath?: string
   createdAt: string
   updatedAt: string
 }

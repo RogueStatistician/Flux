@@ -137,7 +137,32 @@ const MIGRATION_V2 = `
 ALTER TABLE object_fields ADD COLUMN description TEXT;
 `
 
-// ── Lifecycle ─────────────────────────────────────────────────────────────────
+/**
+ * Migration v2 → v3: adds Workday-style template layout fields to data_objects.
+ *
+ * template_header_row  — 0-based index of the row that contains column names.
+ * template_skip_columns — number of leading columns to ignore when reading/writing data.
+ * template_file_path   — absolute path to the original uploaded template file, used by
+ *                        the engine to preserve the template structure on output.
+ */
+const MIGRATION_V3 = `
+ALTER TABLE data_objects ADD COLUMN template_header_row    INTEGER DEFAULT 0;
+ALTER TABLE data_objects ADD COLUMN template_skip_columns  INTEGER DEFAULT 0;
+ALTER TABLE data_objects ADD COLUMN template_file_path     TEXT;
+`
+
+/**
+ * Migration v3 → v4: decouples "where column names live" from "where data starts".
+ *
+ * template_data_start_row — 0-based index of the first row that should contain
+ *                           transformed data in the output file.  When NULL the
+ *                           engine falls back to template_header_row + 1, which
+ *                           preserves the behaviour of databases created before
+ *                           this migration.
+ */
+const MIGRATION_V4 = `
+ALTER TABLE data_objects ADD COLUMN template_data_start_row INTEGER DEFAULT NULL;
+`
 
 /**
  * Open (or create) a .flux SQLite file and run any pending migrations.
@@ -201,5 +226,15 @@ function applyMigrations(db: Database.Database): void {
   if (currentVersion < 2) {
     db.exec(MIGRATION_V2)
     db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '2')
+  }
+
+  if (currentVersion < 3) {
+    db.exec(MIGRATION_V3)
+    db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '3')
+  }
+
+  if (currentVersion < 4) {
+    db.exec(MIGRATION_V4)
+    db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '4')
   }
 }

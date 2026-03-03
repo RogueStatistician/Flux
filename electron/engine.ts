@@ -29,6 +29,10 @@ interface ObjectRow {
   id: string
   name: string
   output_format: string
+  template_header_row: number | null
+  template_data_start_row: number | null
+  template_skip_columns: number | null
+  template_file_path: string | null
 }
 
 interface ObjectFieldRow {
@@ -389,7 +393,58 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
     const ext = format === 'xlsx' ? '.xlsx' : '.csv'
     const outFilePath = path.join(tempDir, `${targetObjectId}${ext}`)
 
-    if (format === 'xlsx') {
+    const templateFilePath = targetObj.template_file_path
+    const headerRow = targetObj.template_header_row ?? 0
+    const skipColumns = targetObj.template_skip_columns ?? 0
+    // firstDataRow defaults to headerRow + 1 when template_data_start_row is not set,
+    // preserving backward-compatible behaviour for Case A (header row = last preamble row).
+    // When set explicitly it can differ from headerRow (Case B: header row for field-name
+    // inference is earlier than the last preserved preamble row).
+    const firstDataRow = targetObj.template_data_start_row ?? (headerRow + 1)
+    const useTemplate = format === 'xlsx' && !!templateFilePath && fs.existsSync(templateFilePath)
+
+    if (format === 'xlsx' && useTemplate) {
+      // ── Template-based output: preserve the original workbook structure ──────
+      // Load the original template, clear the data area, then write transformed
+      // rows so preamble rows and column offsets are retained exactly.
+      const templateBuf = fs.readFileSync(templateFilePath!)
+      const wb = XLSX.read(templateBuf, { raw: false, cellDates: false })
+      const wsName = wb.SheetNames[0]
+      const ws = wb.Sheets[wsName]
+
+      // Decode the current sheet extent (fall back to a single cell if empty).
+      const refStr = ws['!ref'] ?? 'A1'
+      const sheetRange = XLSX.utils.decode_range(refStr)
+
+      // Clear all cells in the data area (rows from firstDataRow onwards,
+      // columns at or after skipColumns) so stale template data is removed.
+      for (let r = firstDataRow; r <= sheetRange.e.r; r++) {
+        for (let c = skipColumns; c <= sheetRange.e.c; c++) {
+          delete ws[XLSX.utils.encode_cell({ r, c })]
+        }
+      }
+
+      // Write transformed rows starting at firstDataRow.
+      outputRows.forEach((outRow, rowIdx) => {
+        const r = firstDataRow + rowIdx
+        targetFields.forEach((tf, colIdx) => {
+          const c = skipColumns + colIdx
+          const value = outRow[tf.name] ?? ''
+          ws[XLSX.utils.encode_cell({ r, c })] = { v: value, t: 's' }
+        })
+      })
+
+      // Expand the sheet range to cover all written rows/columns.
+      const lastDataRow = firstDataRow + outputRows.length - 1
+      const lastDataCol = skipColumns + targetFields.length - 1
+      sheetRange.e.r = Math.max(sheetRange.e.r, lastDataRow)
+      sheetRange.e.c = Math.max(sheetRange.e.c, lastDataCol)
+      ws['!ref'] = XLSX.utils.encode_range(sheetRange)
+
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+      fs.writeFileSync(outFilePath, buf)
+    } else if (format === 'xlsx') {
+      // ── Standard from-scratch XLSX output ────────────────────────────────────
       const ws = XLSX.utils.json_to_sheet(outputRows)
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, targetObj.name.slice(0, 31))
