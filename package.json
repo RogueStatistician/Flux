@@ -14,7 +14,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
-    "rebuild-native": "electron-rebuild -f -w better-sqlite3"
+    "rebuild-native": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@xyflow/react": "^12.3.6",
@@ -60,6 +61,9 @@
     "linux": {
       "target": "AppImage"
     },
-    "nativeRebuilder": "sequential"
+    "nativeRebuilder": "sequential",
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**"
+    ]
   }
 }
