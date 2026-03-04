@@ -175,6 +175,100 @@ function applyIncremental(cfg: { start?: number; step?: number }, rowIndex: numb
   return String((cfg.start ?? 1) + rowIndex * (cfg.step ?? 1))
 }
 
+// ── Canvas state types (minimal, for filter evaluation) ───────────────────────
+
+interface CanvasNode {
+  id: string
+  type?: string
+  data: Record<string, unknown>
+}
+
+interface CanvasEdge {
+  source: string
+  target: string
+}
+
+interface CanvasState {
+  nodes: CanvasNode[]
+  edges: CanvasEdge[]
+}
+
+interface FilterCondition {
+  field: string  // encoded as "objectId::fieldName"
+  op: string
+  value: string
+}
+
+// ── Filter evaluation ─────────────────────────────────────────────────────────
+
+function evaluateFilterCondition(cond: FilterCondition, row: Record<string, string>): boolean {
+  // field is encoded as "objectId::fieldName" — extract just the field name
+  const sep = cond.field.indexOf('::')
+  const fieldName = sep >= 0 ? cond.field.slice(sep + 2) : cond.field
+  const cell = row[fieldName] ?? ''
+  const val = cond.value ?? ''
+
+  switch (cond.op) {
+    case '=':           return cell === val
+    case '!=':          return cell !== val
+    case '>': { const [n, m] = [Number(cell), Number(val)]; return !isNaN(n) && !isNaN(m) ? n > m : cell > val }
+    case '<': { const [n, m] = [Number(cell), Number(val)]; return !isNaN(n) && !isNaN(m) ? n < m : cell < val }
+    case '>=': { const [n, m] = [Number(cell), Number(val)]; return !isNaN(n) && !isNaN(m) ? n >= m : cell >= val }
+    case '<=': { const [n, m] = [Number(cell), Number(val)]; return !isNaN(n) && !isNaN(m) ? n <= m : cell <= val }
+    case 'contains':     return cell.includes(val)
+    case 'not_contains': return !cell.includes(val)
+    case 'starts_with':  return cell.startsWith(val)
+    case 'ends_with':    return cell.endsWith(val)
+    case 'is_empty':     return cell === ''
+    case 'is_not_empty': return cell !== ''
+    default:             return true
+  }
+}
+
+/**
+ * Walks the canvas graph backwards from a targetObject node and collects all
+ * FilterCondition entries from filterOperator nodes that lie on the path from
+ * sourceObjectId → targetObjectId. Returns a flat list — ALL conditions must
+ * match for a row to pass (AND semantics).
+ */
+function findFilterConditions(
+  sourceObjectId: string,
+  targetObjectId: string,
+  canvas: CanvasState,
+): FilterCondition[] {
+  const { nodes, edges } = canvas
+  const targetNode = nodes.find(
+    n => n.type === 'targetObject' && n.data.objectId === targetObjectId
+  )
+  if (!targetNode) return []
+
+  const collected: FilterCondition[] = []
+
+  function walk(nodeId: string): boolean {
+    for (const edge of edges) {
+      if (edge.target !== nodeId) continue
+      const srcNode = nodes.find(n => n.id === edge.source)
+      if (!srcNode) continue
+
+      if (srcNode.type === 'sourceObject') {
+        if ((srcNode.data.objectId as string) === sourceObjectId) return true
+      } else if (srcNode.type === 'filterOperator') {
+        if (walk(srcNode.id)) {
+          const conds = (srcNode.data.conditions ?? []) as FilterCondition[]
+          collected.push(...conds)
+          return true
+        }
+      } else {
+        if (walk(srcNode.id)) return true
+      }
+    }
+    return false
+  }
+
+  walk(targetNode.id)
+  return collected
+}
+
 // ── Main execute function ──────────────────────────────────────────────────────
 
 /**
@@ -215,6 +309,16 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
   const runState = activeRuns.get(runId)!
 
   sendProgress(runId, { status: 'running', phase: 'loading' })
+
+  // ── Load canvas state (for filter node evaluation) ───────────────────────────
+
+  let canvas: CanvasState | null = null
+  const canvasRow = db.prepare(
+    'SELECT canvas_state FROM transformations WHERE id = ?'
+  ).get(transformationId) as { canvas_state: string | null } | undefined
+  if (canvasRow?.canvas_state) {
+    try { canvas = JSON.parse(canvasRow.canvas_state) as CanvasState } catch { /* ignore */ }
+  }
 
   // ── Load field mappings ──────────────────────────────────────────────────────
 
@@ -320,6 +424,12 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       rowsTotal: totalRows,
     })
 
+    // ── Resolve filter conditions for this source → target path ──────────────
+
+    const filterConditions = (canvas && primarySourceObjectId)
+      ? findFilterConditions(primarySourceObjectId, targetObjectId, canvas)
+      : []
+
     // ── Row-by-row processing ─────────────────────────────────────────────────
 
     const outputRows: Record<string, string>[] = []
@@ -328,6 +438,10 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       if (runState.cancelled) break
 
       const srcRow = sourceRows[i]
+
+      // Skip rows that don't satisfy all filter conditions (AND semantics)
+      if (filterConditions.length > 0 && !filterConditions.every(c => evaluateFilterCondition(c, srcRow))) continue
+
       const outRow: Record<string, string> = {}
 
       for (const tf of targetFields) {
