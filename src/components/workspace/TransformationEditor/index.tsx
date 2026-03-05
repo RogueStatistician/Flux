@@ -42,6 +42,7 @@ import { FilterOperatorNode } from './nodes/FilterOperatorNode.js'
 import { MapPanel } from './MapPanel.js'
 import { JoinPanel } from './JoinPanel.js'
 import { FilterPanel } from './FilterPanel.js'
+import { PipelineEdge } from './PipelineEdge.js'
 import type { JoinNodeData } from './nodes/JoinOperatorNode.js'
 import type { FilterNodeData } from './nodes/FilterOperatorNode.js'
 
@@ -57,11 +58,15 @@ const NODE_TYPES = {
   filterOperator: FilterOperatorNode,
 }
 
+const EDGE_TYPES = {
+  pipeline: PipelineEdge,
+}
+
 // ── Edge style helpers ────────────────────────────────────────────────────────
 
 function pipelineEdge(overrides?: Partial<Edge>): Partial<Edge> {
   return {
-    type: 'smoothstep',
+    type: 'pipeline',
     style: { stroke: '#8b5cf6', strokeWidth: 2 },
     markerEnd: { type: MarkerType.ArrowClosed, color: '#8b5cf6' },
     ...overrides,
@@ -621,6 +626,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
               nodes={nodes}
               edges={edges}
               nodeTypes={NODE_TYPES}
+              edgeTypes={EDGE_TYPES}
               onNodesChange={handleNodesChange}
               onEdgesChange={handleEdgesChange}
               onConnect={onConnect}

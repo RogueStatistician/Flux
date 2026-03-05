@@ -186,6 +186,7 @@ interface CanvasNode {
 interface CanvasEdge {
   source: string
   target: string
+  targetHandle?: string
 }
 
 interface CanvasState {
@@ -267,6 +268,141 @@ function findFilterConditions(
 
   walk(targetNode.id)
   return collected
+}
+
+// ── Join execution ────────────────────────────────────────────────────────────
+
+interface JoinSpec {
+  joinType: 'inner' | 'left' | 'right'
+  joinKeyA: string  // encoded as "objectId::fieldName"
+  joinKeyB: string  // encoded as "objectId::fieldName"
+  sourceAId: string
+  sourceBId: string
+}
+
+/** Recursively finds the first sourceObject ID reachable upstream of nodeId. */
+function findAnySourceId(nodeId: string, canvas: CanvasState): string | null {
+  for (const edge of canvas.edges) {
+    if (edge.target !== nodeId) continue
+    const srcNode = canvas.nodes.find(n => n.id === edge.source)
+    if (!srcNode) continue
+    if (srcNode.type === 'sourceObject') return srcNode.data.objectId as string
+    const found = findAnySourceId(srcNode.id, canvas)
+    if (found) return found
+  }
+  return null
+}
+
+/** Find source ID for a specific handle on a join node, traversing through operators. */
+function findSourceIdByHandle(
+  joinNodeId: string,
+  handleId: string,
+  canvas: CanvasState,
+): string | null {
+  const inEdges = canvas.edges.filter(e => e.target === joinNodeId && e.targetHandle === handleId)
+  for (const edge of inEdges) {
+    const srcNode = canvas.nodes.find(n => n.id === edge.source)
+    if (!srcNode) continue
+    if (srcNode.type === 'sourceObject') return srcNode.data.objectId as string
+    const found = findAnySourceId(srcNode.id, canvas)
+    if (found) return found
+  }
+  return null
+}
+
+/**
+ * Walks the canvas graph backwards from targetObjectId and returns the first
+ * joinOperator node found on the path, with its configuration and resolved
+ * source IDs for each input handle.
+ */
+function findJoinSpec(targetObjectId: string, canvas: CanvasState): JoinSpec | null {
+  const targetNode = canvas.nodes.find(
+    n => n.type === 'targetObject' && n.data.objectId === targetObjectId
+  )
+  if (!targetNode) return null
+
+  function walk(nodeId: string): JoinSpec | null {
+    for (const edge of canvas.edges) {
+      if (edge.target !== nodeId) continue
+      const srcNode = canvas.nodes.find(n => n.id === edge.source)
+      if (!srcNode) continue
+
+      if (srcNode.type === 'joinOperator') {
+        const sourceAId = findSourceIdByHandle(srcNode.id, 'input-a', canvas)
+        const sourceBId = findSourceIdByHandle(srcNode.id, 'input-b', canvas)
+        if (!sourceAId || !sourceBId) return null
+        return {
+          joinType: (srcNode.data.joinType as 'inner' | 'left' | 'right') ?? 'left',
+          joinKeyA: (srcNode.data.joinKeyA as string) ?? '',
+          joinKeyB: (srcNode.data.joinKeyB as string) ?? '',
+          sourceAId,
+          sourceBId,
+        }
+      }
+      const found = walk(srcNode.id)
+      if (found) return found
+    }
+    return null
+  }
+
+  return walk(targetNode.id)
+}
+
+/** Decode a field reference that may be encoded as "objectId::fieldName". */
+function decodeFieldName(encoded: string): string {
+  const sep = encoded.indexOf('::')
+  return sep >= 0 ? encoded.slice(sep + 2) : encoded
+}
+
+/**
+ * Perform an inner / left / right join of two row sets.
+ * Merged rows have all fields from both A and B; A fields overwrite B on collision.
+ * For right joins B fields take priority (A overwrites only where B is absent).
+ */
+function executeJoin(
+  rowsA: Record<string, string>[],
+  rowsB: Record<string, string>[],
+  spec: JoinSpec,
+): Record<string, string>[] {
+  const keyA = decodeFieldName(spec.joinKeyA)
+  const keyB = decodeFieldName(spec.joinKeyB)
+
+  // Index B rows by their join key value
+  const bIndex = new Map<string, Record<string, string>[]>()
+  for (const row of rowsB) {
+    const k = row[keyB] ?? ''
+    if (!bIndex.has(k)) bIndex.set(k, [])
+    bIndex.get(k)!.push(row)
+  }
+
+  const result: Record<string, string>[] = []
+
+  if (spec.joinType === 'inner' || spec.joinType === 'left') {
+    const emptyB: Record<string, string> = {}
+    for (const rowA of rowsA) {
+      const matches = bIndex.get(rowA[keyA] ?? '') ?? (spec.joinType === 'left' ? [emptyB] : [])
+      for (const rowB of matches) {
+        result.push({ ...rowB, ...rowA })  // A fields win on collision
+      }
+    }
+  } else {
+    // right join: B is the "driving" side
+    const aIndex = new Map<string, Record<string, string>[]>()
+    for (const row of rowsA) {
+      const k = row[keyA] ?? ''
+      if (!aIndex.has(k)) aIndex.set(k, [])
+      aIndex.get(k)!.push(row)
+    }
+    const emptyA: Record<string, string> = {}
+    for (const rowB of rowsB) {
+      const matches = aIndex.get(rowB[keyB] ?? '') ?? [emptyA]
+      for (const rowA of matches) {
+        result.push({ ...rowA, ...rowB })  // B fields win on collision
+      }
+    }
+  }
+
+  return result
 }
 
 // ── Main execute function ──────────────────────────────────────────────────────
@@ -399,10 +535,21 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       }
     }
 
-    // ── Load source rows ──────────────────────────────────────────────────────
+    // ── Load source rows (with join if configured) ────────────────────────────
 
+    const joinSpec = canvas ? findJoinSpec(targetObjectId, canvas) : null
     let sourceRows: Record<string, string>[] = []
-    if (primarySourceObjectId) {
+
+    if (joinSpec) {
+      const loadRows = (objectId: string) =>
+        (db.prepare(
+          'SELECT row_index, data FROM source_rows WHERE object_id = ? ORDER BY row_index ASC'
+        ).all(objectId) as SourceRowDB[]).map(r => JSON.parse(r.data) as Record<string, string>)
+
+      sourceRows = executeJoin(loadRows(joinSpec.sourceAId), loadRows(joinSpec.sourceBId), joinSpec)
+      // For filter traversal: use sourceA as the anchor (filters walk through join nodes)
+      primarySourceObjectId = joinSpec.sourceAId
+    } else if (primarySourceObjectId) {
       const dbRows = db.prepare(
         'SELECT row_index, data FROM source_rows WHERE object_id = ? ORDER BY row_index ASC'
       ).all(primarySourceObjectId) as SourceRowDB[]
