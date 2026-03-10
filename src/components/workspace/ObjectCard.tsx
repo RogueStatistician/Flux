@@ -25,13 +25,13 @@ export function ObjectCard({ object, onClick, onDelete }: Props) {
       </span>
 
       {/* Name */}
-      <p className="text-sm font-semibold text-gray-800 pr-16 truncate group-hover:text-blue-700 transition-colors">
+      <p className="text-sm font-semibold text-gray-800 pr-16 break-words group-hover:text-blue-700 transition-colors">
         {object.name}
       </p>
 
       {/* System name */}
       {object.systemName && (
-        <p className="text-xs text-gray-400 mt-0.5 truncate">{object.systemName}</p>
+        <p className="text-xs text-gray-400 mt-0.5 break-words">{object.systemName}</p>
       )}
 
       {/* Stats */}
@@ -40,7 +40,7 @@ export function ObjectCard({ object, onClick, onDelete }: Props) {
           <Stat label="Rows" value={object.rowCount.toLocaleString()} />
         )}
         {object.fileName && (
-          <Stat label="File" value={object.fileName} truncate />
+          <Stat label="File" value={object.fileName} />
         )}
       </div>
 
@@ -56,11 +56,11 @@ export function ObjectCard({ object, onClick, onDelete }: Props) {
   )
 }
 
-function Stat({ label, value, truncate }: { label: string; value: string | number; truncate?: boolean }) {
+function Stat({ label, value }: { label: string; value: string | number }) {
   return (
     <div>
       <p className="text-xs text-gray-400">{label}</p>
-      <p className={['text-xs font-medium text-gray-700', truncate ? 'truncate max-w-[120px]' : ''].join(' ')}>
+      <p className="text-xs font-medium text-gray-700 break-words">
         {value}
       </p>
     </div>

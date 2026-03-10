@@ -39,28 +39,38 @@ import { TargetObjectNode } from './nodes/TargetObjectNode.js'
 import { MapOperatorNode, type MapNodeData } from './nodes/MapOperatorNode.js'
 import { JoinOperatorNode } from './nodes/JoinOperatorNode.js'
 import { FilterOperatorNode } from './nodes/FilterOperatorNode.js'
+import { AppendOperatorNode } from './nodes/AppendOperatorNode.js'
+import type { AppendNodeData } from './nodes/AppendOperatorNode.js'
+import { DeduplicateOperatorNode } from './nodes/DeduplicateOperatorNode.js'
+import type { DeduplicateNodeData } from './nodes/DeduplicateOperatorNode.js'
 import { MapPanel } from './MapPanel.js'
 import { JoinPanel } from './JoinPanel.js'
 import { FilterPanel } from './FilterPanel.js'
+import { DeduplicatePanel } from './DeduplicatePanel.js'
 import { PipelineEdge } from './PipelineEdge.js'
 import type { JoinNodeData } from './nodes/JoinOperatorNode.js'
 import type { FilterNodeData } from './nodes/FilterOperatorNode.js'
+import { NodeContextMenu } from './nodes/NodeContextMenu.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const SAVE_DEBOUNCE_MS = 600
 
 const NODE_TYPES = {
-  sourceObject:   SourceObjectNode,
-  targetObject:   TargetObjectNode,
-  mapOperator:    MapOperatorNode,
-  joinOperator:   JoinOperatorNode,
-  filterOperator: FilterOperatorNode,
+  sourceObject:    SourceObjectNode,
+  targetObject:    TargetObjectNode,
+  mapOperator:     MapOperatorNode,
+  joinOperator:    JoinOperatorNode,
+  filterOperator:      FilterOperatorNode,
+  appendOperator:      AppendOperatorNode,
+  dedupOperator:       DeduplicateOperatorNode,
 }
 
 const EDGE_TYPES = {
   pipeline: PipelineEdge,
 }
+
+const OPERATOR_TYPES = new Set(['joinOperator', 'filterOperator', 'appendOperator', 'dedupOperator'])
 
 // ── Edge style helpers ────────────────────────────────────────────────────────
 
@@ -93,10 +103,21 @@ interface SavedCanvas {
   }>
 }
 
+/** Count field mapping rules that belong to a specific MapNode.
+ *  Handles both node-scoped rules (mapNodeId set) and legacy null-scoped rules
+ *  (only the primary MapNode `map-{targetObjectId}` inherits those). */
+function countRulesForMapNode(mapNodeId: string, targetObjectId: string, fieldMappings: FieldMapping[]): number {
+  return fieldMappings.filter(m =>
+    m.mapNodeId === mapNodeId ||
+    (!m.mapNodeId && m.targetObjectId === targetObjectId && mapNodeId === `map-${targetObjectId}`)
+  ).length
+}
+
 function restoreCanvas(
   raw: string | undefined,
   allObjects: DataObject[],
   fieldMappings: FieldMapping[],
+  fieldsMap: Record<string, ObjectField[]>,
 ): { nodes: Node[]; edges: Edge[] } {
   if (!raw) return { nodes: [], edges: [] }
   try {
@@ -112,14 +133,15 @@ function restoreCanvas(
           const objId = sn.data.objectId as string
           const obj = allObjects.find(o => o.id === objId)
           if (!obj) return []
-          return [{ id: sn.id, type: sn.type, position: sn.position, data: { objectId: obj.id, name: obj.name, systemName: obj.systemName } }]
+          const columnCount = fieldsMap[obj.id]?.length ?? 0
+          return [{ id: sn.id, type: sn.type, position: sn.position, data: { objectId: obj.id, name: obj.name, systemName: obj.systemName, columnCount } }]
         }
         if (sn.type === 'mapOperator') {
           const targetObjectId = sn.data.targetObjectId as string
-          const ruleCount = fieldMappings.filter(m => m.targetObjectId === targetObjectId).length
+          const ruleCount = countRulesForMapNode(sn.id, targetObjectId, fieldMappings)
           return [{ id: sn.id, type: sn.type, position: sn.position, data: { ...sn.data, ruleCount } }]
         }
-        // joinOperator / filterOperator: restore as-is
+        // joinOperator / filterOperator / appendOperator: restore as-is
         return [{ id: sn.id, type: sn.type, position: sn.position, data: sn.data }]
       })
 
@@ -141,7 +163,8 @@ function restoreCanvas(
         const objId = sn.id.slice(4)
         const obj = allObjects.find(o => o.id === objId)
         if (!obj) return []
-        return [{ id: sn.id, type: isSource ? 'sourceObject' : 'targetObject', position: sn.position, data: { objectId: obj.id, name: obj.name, systemName: obj.systemName } }]
+        const columnCount = fieldsMap[obj.id]?.length ?? 0
+        return [{ id: sn.id, type: isSource ? 'sourceObject' : 'targetObject', position: sn.position, data: { objectId: obj.id, name: obj.name, systemName: obj.systemName, columnCount } }]
       })
       return { nodes, edges: [] }
     }
@@ -155,7 +178,7 @@ function serializeCanvas(nodes: Node[], edges: Edge[]): string {
     id: n.id,
     type: n.type ?? 'unknown',
     position: n.position,
-    data: n.data as Record<string, unknown>,
+    data: (({ _renaming, ...rest }) => rest)(n.data as Record<string, unknown>),
   }))
   const saveEdges = edges.map(e => ({
     id: e.id,
@@ -172,12 +195,14 @@ function serializeCanvas(nodes: Node[], edges: Edge[]): string {
 function DockItem({
   label,
   sub,
+  columnCount,
   onCanvas,
   role,
   onClick,
 }: {
   label: string
   sub?: string
+  columnCount?: number
   onCanvas: boolean
   role: 'source' | 'target'
   onClick: () => void
@@ -194,9 +219,14 @@ function DockItem({
       title={onCanvas ? 'Click to remove from canvas' : 'Click to add to canvas'}
       className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors mb-1 border ${onCanvas ? activeClass : idleClass}`}
     >
-      <span className="truncate block">{label}</span>
-      {sub && <span className="text-xs opacity-50 font-normal truncate block">{sub}</span>}
-      {onCanvas && <span className="text-xs opacity-50 font-normal">on canvas</span>}
+      <span className="break-words block">{label}</span>
+      {sub && <span className="text-xs opacity-50 font-normal break-words block">{sub}</span>}
+      <span className="flex items-center justify-between mt-0.5">
+        {onCanvas && <span className="text-xs opacity-50 font-normal">on canvas</span>}
+        {columnCount !== undefined && (
+          <span className="text-xs opacity-40 font-normal ml-auto">{columnCount} col{columnCount !== 1 ? 's' : ''}</span>
+        )}
+      </span>
     </button>
   )
 }
@@ -220,6 +250,9 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
   const [mapPanel, setMapPanel] = useState<{ mapNodeId: string; targetObjectId: string } | null>(null)
   const [joinPanel, setJoinPanel] = useState<{ joinNodeId: string } | null>(null)
   const [filterPanel, setFilterPanel] = useState<{ filterNodeId: string } | null>(null)
+  const [dedupPanel, setDedupPanel] = useState<{ dedupNodeId: string } | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<{ nodeId: string; nodeType: string; x: number; y: number } | null>(null)
+  const [canvasError, setCanvasError] = useState<string | null>(null)
 
   const [nodes, setNodes] = useNodesState<Node>([])
   const [edges, setEdges] = useEdgesState<Edge>([])
@@ -253,7 +286,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
         setFieldsMap(fMap)
         setFieldMappings(mappings)
 
-        const { nodes: restoredNodes, edges: restoredEdges } = restoreCanvas(t.canvasState, objects, mappings)
+        const { nodes: restoredNodes, edges: restoredEdges } = restoreCanvas(t.canvasState, objects, mappings, fMap)
         setNodes(restoredNodes)
         setEdges(restoredEdges)
       } catch (e) {
@@ -272,7 +305,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
     setNodes(nds => nds.map(n => {
       if (n.type !== 'mapOperator') return n
       const d = n.data as unknown as MapNodeData
-      const count = fieldMappings.filter(m => m.targetObjectId === d.targetObjectId).length
+      const count = countRulesForMapNode(n.id, d.targetObjectId, fieldMappings)
       if (count === d.ruleCount) return n
       return { ...n, data: { ...n.data, ruleCount: count } }
     }))
@@ -300,11 +333,24 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
     for (const nodeId of removedMapNodeIds) {
       const node = nodesRef.current.find(n => n.id === nodeId)
       const targetObjectId = (node?.data as Record<string, unknown> | undefined)?.targetObjectId as string | undefined
-      if (targetObjectId) {
+      if (!targetObjectId) continue
+
+      // Check whether other MapNodes for the same target still exist after this removal.
+      const otherMapNodes = nodesRef.current.filter(n =>
+        n.type === 'mapOperator' &&
+        n.id !== nodeId &&
+        (n.data as Record<string, unknown>).targetObjectId === targetObjectId
+      )
+
+      if (otherMapNodes.length > 0) {
+        // Scoped delete: only this node's rules (keep sibling MapNode rules intact).
+        window.electronAPI?.deleteFieldMappingsByNode(nodeId)
+          .then(() => setFieldMappings(prev => prev.filter(m => m.mapNodeId !== nodeId)))
+          .catch(() => {})
+      } else {
+        // Last MapNode for target: full delete (covers both new-style and legacy null-scoped rows).
         window.electronAPI?.deleteFieldMappingsByTarget(transformationId, targetObjectId)
-          .then(() => {
-            setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId))
-          })
+          .then(() => setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId)))
           .catch(() => {})
       }
     }
@@ -317,12 +363,31 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
   }, [scheduleSave, transformationId])
 
   const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
+    // When an edge going INTO a MapNode is removed, clear that MapNode's rules.
+    // This happens when: Delete key on edge, or source node deleted (React Flow fires edge changes too).
+    for (const change of changes) {
+      if (change.type !== 'remove') continue
+      const edge = edgesRef.current.find(e => e.id === change.id)
+      if (!edge) continue
+      const targetNode = nodesRef.current.find(n => n.id === edge.target)
+      if (targetNode?.type !== 'mapOperator') continue
+      const targetObjectId = (targetNode.data as Record<string, unknown>).targetObjectId as string
+      if (targetNode.id === `map-${targetObjectId}`) {
+        window.electronAPI?.deleteFieldMappingsByTarget(transformationId, targetObjectId)
+          .then(() => setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId)))
+          .catch(() => {})
+      } else {
+        window.electronAPI?.deleteFieldMappingsByNode(targetNode.id)
+          .then(() => setFieldMappings(prev => prev.filter(m => m.mapNodeId !== targetNode.id)))
+          .catch(() => {})
+      }
+    }
     setEdges(eds => {
       const updated = applyEdgeChanges(changes, eds)
       scheduleSave(nodesRef.current, updated)
       return updated
     })
-  }, [scheduleSave])
+  }, [scheduleSave, transformationId])
 
   // ── Connect handler — creates canvas edge only (no field_mappings) ─────────
 
@@ -335,6 +400,10 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
       e.source === source && e.target === target &&
       e.sourceHandle === sourceHandle && e.targetHandle === targetHandle
     )) return
+
+    // Prevent multiple inputs to a MapNode (each MapNode has exactly one source pipeline)
+    const targetNode = nodesRef.current.find(n => n.id === target)
+    if (targetNode?.type === 'mapOperator' && edgesRef.current.some(e => e.target === target)) return
 
     const newEdge: Edge = {
       ...pipelineEdge() as Edge,
@@ -359,6 +428,25 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
     const isOnCanvas = nodesRef.current.some(n => n.id === nodeId)
 
     if (isOnCanvas) {
+      // Clear rules for MapNodes directly connected to this source
+      const connectedMapNodeIds = edgesRef.current
+        .filter(e => e.source === nodeId)
+        .map(e => e.target)
+        .filter(targetId => nodesRef.current.find(n => n.id === targetId)?.type === 'mapOperator')
+      for (const mapNodeId of connectedMapNodeIds) {
+        const mapNode = nodesRef.current.find(n => n.id === mapNodeId)
+        if (!mapNode) continue
+        const targetObjectId = (mapNode.data as Record<string, unknown>).targetObjectId as string
+        if (mapNodeId === `map-${targetObjectId}`) {
+          window.electronAPI?.deleteFieldMappingsByTarget(transformationId, targetObjectId)
+            .then(() => setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId)))
+            .catch(() => {})
+        } else {
+          window.electronAPI?.deleteFieldMappingsByNode(mapNodeId)
+            .then(() => setFieldMappings(prev => prev.filter(m => m.mapNodeId !== mapNodeId)))
+            .catch(() => {})
+        }
+      }
       setNodes(nds => {
         const updated = nds.filter(n => n.id !== nodeId)
         scheduleSave(updated, edgesRef.current)
@@ -375,7 +463,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
         id: nodeId,
         type: 'sourceObject',
         position: { x: 60, y: 80 + srcCount * 130 },
-        data: { objectId: obj.id, name: obj.name, systemName: obj.systemName },
+        data: { objectId: obj.id, name: obj.name, systemName: obj.systemName, columnCount: fieldsMap[obj.id]?.length ?? 0 },
       }
       setNodes(nds => {
         const updated = [...nds, newNode]
@@ -389,35 +477,37 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
 
   const handleDockTarget = useCallback((obj: DataObject) => {
     const tgtNodeId = `tgt-${obj.id}`
-    const mapNodeId = `map-${obj.id}`
     const isOnCanvas = nodesRef.current.some(n => n.id === tgtNodeId)
 
     if (isOnCanvas) {
-      // Remove canvas nodes + edges
+      // Remove target node AND all its MapNodes (there may be multiple)
+      const mapNodeIdsToRemove = nodesRef.current
+        .filter(n => n.type === 'mapOperator' && (n.data as Record<string, unknown>).targetObjectId === obj.id)
+        .map(n => n.id)
+      const idsToRemove = new Set([tgtNodeId, ...mapNodeIdsToRemove])
+
       setNodes(nds => {
-        const updated = nds.filter(n => n.id !== tgtNodeId && n.id !== mapNodeId)
+        const updated = nds.filter(n => !idsToRemove.has(n.id))
         scheduleSave(updated, edgesRef.current)
         return updated
       })
       setEdges(eds => {
-        const updated = eds.filter(e =>
-          e.source !== tgtNodeId && e.target !== tgtNodeId &&
-          e.source !== mapNodeId && e.target !== mapNodeId
-        )
+        const updated = eds.filter(e => !idsToRemove.has(e.source) && !idsToRemove.has(e.target))
         scheduleSave(nodesRef.current, updated)
         return updated
       })
-      // Delete field mapping rules from the DB so the engine won't output this target
+      // Delete ALL field mapping rules for this target (all MapNodes + legacy null-scoped)
       window.electronAPI?.deleteFieldMappingsByTarget(transformationId, obj.id).then(() => {
         setFieldMappings(prev => prev.filter(m => m.targetObjectId !== obj.id))
       }).catch(() => {})
     } else {
+      const firstMapNodeId = `map-${obj.id}`
       const tgtCount = nodesRef.current.filter(n => n.type === 'targetObject').length
       const y = 80 + tgtCount * 150
-      const ruleCount = fieldMappings.filter(m => m.targetObjectId === obj.id).length
+      const ruleCount = countRulesForMapNode(firstMapNodeId, obj.id, fieldMappings)
 
       const mapNode: Node = {
-        id: mapNodeId,
+        id: firstMapNodeId,
         type: 'mapOperator',
         position: { x: 440, y },
         data: { targetObjectId: obj.id, targetObjectName: obj.name, ruleCount },
@@ -426,12 +516,12 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
         id: tgtNodeId,
         type: 'targetObject',
         position: { x: 680, y },
-        data: { objectId: obj.id, name: obj.name, systemName: obj.systemName },
+        data: { objectId: obj.id, name: obj.name, systemName: obj.systemName, columnCount: fieldsMap[obj.id]?.length ?? 0 },
       }
       const linkEdge: Edge = {
         ...pipelineEdge() as Edge,
-        id: `e-${mapNodeId}-${tgtNodeId}`,
-        source: mapNodeId,
+        id: `e-${firstMapNodeId}-${tgtNodeId}`,
+        source: firstMapNodeId,
         sourceHandle: 'output',
         target: tgtNodeId,
         targetHandle: 'input',
@@ -480,6 +570,139 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
     })
   }, [scheduleSave])
 
+  const handleAddAppend = useCallback(() => {
+    const id = `append-${Date.now()}`
+    const opCount = nodesRef.current.filter(n => n.type === 'joinOperator' || n.type === 'filterOperator' || n.type === 'appendOperator').length
+    const newNode: Node = {
+      id,
+      type: 'appendOperator',
+      position: { x: 240, y: 80 + opCount * 140 },
+      data: { inputCount: 2 } satisfies AppendNodeData,
+    }
+    setNodes(nds => {
+      const updated = [...nds, newNode]
+      scheduleSave(updated, edgesRef.current)
+      return updated
+    })
+  }, [scheduleSave])
+
+  const handleAddDedup = useCallback(() => {
+    const id = `dedup-${Date.now()}`
+    const opCount = nodesRef.current.filter(n => n.type === 'joinOperator' || n.type === 'filterOperator' || n.type === 'appendOperator' || n.type === 'dedupOperator').length
+    const newNode: Node = {
+      id,
+      type: 'dedupOperator',
+      position: { x: 240, y: 80 + opCount * 140 },
+      data: {} satisfies DeduplicateNodeData,
+    }
+    setNodes(nds => {
+      const updated = [...nds, newNode]
+      scheduleSave(updated, edgesRef.current)
+      return updated
+    })
+  }, [scheduleSave])
+
+  /** Add a second (or Nth) MapNode for a target that is already on the canvas. */
+  const handleAddMapForTarget = useCallback((obj: DataObject) => {
+    const tgtNodeId = `tgt-${obj.id}`
+    if (!nodesRef.current.some(n => n.id === tgtNodeId)) return
+    const mapNodeId = `map-${obj.id}-${Date.now()}`
+    const existingMaps = nodesRef.current.filter(n => n.type === 'mapOperator' && (n.data as Record<string, unknown>).targetObjectId === obj.id)
+    const lastY = existingMaps.reduce((maxY, n) => Math.max(maxY, n.position.y), 80)
+    const mapNode: Node = {
+      id: mapNodeId,
+      type: 'mapOperator',
+      position: { x: 440, y: lastY + 155 },
+      data: { targetObjectId: obj.id, targetObjectName: obj.name, ruleCount: 0 },
+    }
+    const linkEdge: Edge = {
+      ...pipelineEdge() as Edge,
+      id: `e-${mapNodeId}-${tgtNodeId}`,
+      source: mapNodeId,
+      sourceHandle: 'output',
+      target: tgtNodeId,
+      targetHandle: 'input',
+    }
+    setNodes(nds => {
+      const updated = [...nds, mapNode]
+      scheduleSave(updated, [...edgesRef.current, linkEdge])
+      return updated
+    })
+    setEdges(eds => [...eds, linkEdge])
+  }, [scheduleSave])
+
+  /** Increment the input slot count on an Append node. */
+  const onAppendAddInput = useCallback((appendNodeId: string) => {
+    setNodes(nds => {
+      const updated = nds.map(n => {
+        if (n.id !== appendNodeId) return n
+        const d = n.data as unknown as AppendNodeData
+        return { ...n, data: { ...n.data, inputCount: Math.min((d.inputCount ?? 2) + 1, 8) } }
+      })
+      scheduleSave(updated, edgesRef.current)
+      return updated
+    })
+  }, [scheduleSave])
+
+  /** Update the label of any operator node and clear the _renaming flag. */
+  const onNodeRename = useCallback((nodeId: string, label: string) => {
+    const trimmed = label.trim()
+    // Only check uniqueness for non-empty labels
+    if (trimmed) {
+      const duplicate = nodesRef.current.find(n =>
+        n.id !== nodeId &&
+        OPERATOR_TYPES.has(n.type ?? '') &&
+        ((n.data as Record<string, unknown>).label as string | undefined)?.trim() === trimmed
+      )
+      if (duplicate) {
+        setCanvasError(`A node named "${trimmed}" already exists in this transformation.`)
+        return // Keep the node in _renaming state
+      }
+    }
+    setCanvasError(null)
+    setNodes(nds => {
+      const updated = nds.map(n => n.id !== nodeId ? n : { ...n, data: { ...n.data, label: trimmed, _renaming: undefined } })
+      scheduleSave(updated, edgesRef.current)
+      return updated
+    })
+  }, [scheduleSave])
+
+  const handleContextMenuRename = useCallback((nodeId: string) => {
+    setCtxMenu(null)
+    setNodes(nds => nds.map(n => n.id !== nodeId ? n : { ...n, data: { ...n.data, _renaming: true } }))
+  }, [])
+
+  const handleContextMenuDelete = useCallback((nodeId: string, nodeType: string) => {
+    setCtxMenu(null)
+    // DB cleanup for mapOperator (mirrors handleNodesChange logic)
+    if (nodeType === 'mapOperator') {
+      const node = nodesRef.current.find(n => n.id === nodeId)
+      const targetObjectId = (node?.data as Record<string, unknown>)?.targetObjectId as string | undefined
+      if (targetObjectId) {
+        const otherMaps = nodesRef.current.filter(n =>
+          n.type === 'mapOperator' && n.id !== nodeId &&
+          (n.data as Record<string, unknown>).targetObjectId === targetObjectId
+        )
+        if (otherMaps.length > 0) {
+          window.electronAPI?.deleteFieldMappingsByNode(nodeId)
+            .then(() => setFieldMappings(prev => prev.filter(m => m.mapNodeId !== nodeId)))
+            .catch(() => {})
+        } else {
+          window.electronAPI?.deleteFieldMappingsByTarget(transformationId, targetObjectId)
+            .then(() => setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId)))
+            .catch(() => {})
+        }
+      }
+    }
+    const connectedEdgeIds = new Set(edgesRef.current.filter(e => e.source === nodeId || e.target === nodeId).map(e => e.id))
+    setEdges(eds => eds.filter(e => !connectedEdgeIds.has(e.id)))
+    setNodes(nds => {
+      const updated = nds.filter(n => n.id !== nodeId)
+      scheduleSave(updated, edgesRef.current.filter(e => !connectedEdgeIds.has(e.id)))
+      return updated
+    })
+  }, [scheduleSave, transformationId])
+
   // ── Panel callbacks ────────────────────────────────────────────────────────
 
   const onMapNodeClick = useCallback((mapNodeId: string, targetObjectId: string) => {
@@ -516,11 +739,24 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
     setFilterPanel(null)
   }, [filterPanel, scheduleSave])
 
+  const onDedupNodeClick = useCallback((dedupNodeId: string) => {
+    setDedupPanel({ dedupNodeId })
+  }, [])
+
+  const handleDedupSave = useCallback((data: DeduplicateNodeData) => {
+    setNodes((nds: Node[]) => {
+      const updated = nds.map((n: Node) => n.id === dedupPanel?.dedupNodeId ? { ...n, data: { ...data } } : n)
+      scheduleSave(updated, edgesRef.current)
+      return updated
+    })
+    setDedupPanel(null)
+  }, [dedupPanel, scheduleSave])
+
   // ── Context ────────────────────────────────────────────────────────────────
 
   const ctxValue = useMemo<EditorContextValue>(
-    () => ({ onMapNodeClick, onJoinNodeClick, onFilterNodeClick }),
-    [onMapNodeClick, onJoinNodeClick, onFilterNodeClick],
+    () => ({ onMapNodeClick, onJoinNodeClick, onFilterNodeClick, onDedupNodeClick, onAppendAddInput, onNodeRename }),
+    [onMapNodeClick, onJoinNodeClick, onFilterNodeClick, onDedupNodeClick, onAppendAddInput, onNodeRename],
   )
 
   // ── Derived ────────────────────────────────────────────────────────────────
@@ -587,6 +823,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
                   key={obj.id}
                   label={obj.name}
                   sub={obj.systemName}
+                  columnCount={fieldsMap[obj.id]?.length}
                   role="source"
                   onCanvas={canvasNodeIds.has(`src-${obj.id}`)}
                   onClick={() => handleDockSource(obj)}
@@ -610,6 +847,19 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
             >
               ⊻ Add Filter
             </button>
+            <button
+              onClick={handleAddAppend}
+              className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 mt-1 transition-colors"
+            >
+              ∪ Add Append
+            </button>
+            <button
+              onClick={handleAddDedup}
+              className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium mt-1 transition-colors"
+              style={{ color: '#0f766e', background: '#f0fdfa', border: '1px solid #5eead4' }}
+            >
+              ◎ Add Deduplicate
+            </button>
           </div>
 
           <div className="mt-auto pt-2 border-t border-gray-200">
@@ -621,6 +871,11 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
 
         {/* Canvas */}
         <div className="flex-1 relative bg-gray-50">
+          {canvasError && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 bg-red-50 border border-red-200 text-red-700 text-xs px-4 py-2 rounded-lg shadow-md pointer-events-none">
+              {canvasError}
+            </div>
+          )}
           <EditorContext.Provider value={ctxValue}>
             <ReactFlow
               nodes={nodes}
@@ -630,6 +885,12 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
               onNodesChange={handleNodesChange}
               onEdgesChange={handleEdgesChange}
               onConnect={onConnect}
+              onNodeContextMenu={(e, node) => {
+                if (!OPERATOR_TYPES.has(node.type ?? '') && node.type !== 'mapOperator') return
+                e.preventDefault()
+                setCtxMenu({ nodeId: node.id, nodeType: node.type!, x: e.clientX, y: e.clientY })
+              }}
+              onPaneClick={() => setCtxMenu(null)}
               fitView
               fitViewOptions={{ padding: 0.25 }}
               deleteKeyCode="Delete"
@@ -643,6 +904,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
                   n.type === 'targetObject'   ? '#bbf7d0' :
                   n.type === 'mapOperator'    ? '#ddd6fe' :
                   n.type === 'joinOperator'   ? '#fed7aa' :
+                  n.type === 'appendOperator' ? '#e2e8f0' :
                   '#fde68a'
                 }
                 maskColor="rgba(0,0,0,0.03)"
@@ -658,6 +920,17 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
               )}
             </ReactFlow>
           </EditorContext.Provider>
+
+          {/* Node context menu (right-click on operator nodes) */}
+          {ctxMenu && (
+            <NodeContextMenu
+              x={ctxMenu.x}
+              y={ctxMenu.y}
+              onRename={() => handleContextMenuRename(ctxMenu.nodeId)}
+              onDelete={() => handleContextMenuDelete(ctxMenu.nodeId, ctxMenu.nodeType)}
+              onClose={() => setCtxMenu(null)}
+            />
+          )}
 
           {/* MapPanel (field-rule config) */}
           {mapPanel && (
@@ -710,6 +983,24 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
               />
             )
           })()}
+
+          {/* DeduplicatePanel (dedup config) */}
+          {dedupPanel && (() => {
+            const dedupNode = nodes.find((n: Node) => n.id === dedupPanel.dedupNodeId)
+            if (!dedupNode) return null
+            return (
+              <DeduplicatePanel
+                dedupNodeId={dedupPanel.dedupNodeId}
+                nodes={nodes}
+                edges={edges}
+                allObjects={allObjects}
+                fieldsMap={fieldsMap}
+                initialData={dedupNode.data as unknown as DeduplicateNodeData}
+                onSave={handleDedupSave}
+                onClose={() => setDedupPanel(null)}
+              />
+            )
+          })()}
         </div>
 
         {/* Right dock — Targets */}
@@ -718,16 +1009,30 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
           {targetObjects.length === 0 ? (
             <p className="text-xs text-gray-300 italic">No target objects</p>
           ) : (
-            targetObjects.map(obj => (
-              <DockItem
-                key={obj.id}
-                label={obj.name}
-                sub={obj.systemName}
-                role="target"
-                onCanvas={canvasNodeIds.has(`tgt-${obj.id}`)}
-                onClick={() => handleDockTarget(obj)}
-              />
-            ))
+            targetObjects.map(obj => {
+              const isOnCanvas = canvasNodeIds.has(`tgt-${obj.id}`)
+              return (
+                <div key={obj.id}>
+                  <DockItem
+                    label={obj.name}
+                    sub={obj.systemName}
+                    columnCount={fieldsMap[obj.id]?.length}
+                    role="target"
+                    onCanvas={isOnCanvas}
+                    onClick={() => handleDockTarget(obj)}
+                  />
+                  {isOnCanvas && (
+                    <button
+                      onClick={() => handleAddMapForTarget(obj)}
+                      title="Add another Map node for this target (different-structure source)"
+                      className="w-full text-center py-0.5 -mt-0.5 mb-1.5 text-xs text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 rounded transition-colors"
+                    >
+                      + add mapping
+                    </button>
+                  )}
+                </div>
+              )
+            })
           )}
           <p className="text-xs text-gray-300 mt-3 leading-relaxed">
             Adding a target also places a Map node on the canvas.

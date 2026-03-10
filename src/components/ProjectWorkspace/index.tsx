@@ -87,7 +87,7 @@ function ProjectNameEditor() {
     <button
       onClick={startEdit}
       title="Click to rename"
-      className="w-full text-left text-sm font-semibold text-white truncate hover:text-blue-300 transition-colors"
+      className="w-full text-left text-sm font-semibold text-white break-words hover:text-blue-300 transition-colors"
     >
       {project?.name}
     </button>
@@ -171,7 +171,7 @@ export function ProjectWorkspace() {
           </div>
           <ProjectNameEditor />
           {project?.client && (
-            <p className="text-xs text-gray-400 truncate mt-0.5">{project.client}</p>
+            <p className="text-xs text-gray-400 break-words mt-0.5">{project.client}</p>
           )}
         </div>
 

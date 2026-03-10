@@ -3,6 +3,7 @@
  */
 import { ipcMain } from 'electron'
 import { getDb } from '../db.js'
+import { parseFile, parseAllSheets } from '../importer.js'
 
 // ── Row types ──────────────────────────────────────────────────────────────────
 
@@ -145,6 +146,118 @@ export function registerPlMappingHandlers(): void {
       return (
         db.prepare('SELECT * FROM picklist_mapping_entries WHERE mapping_id = ?').all(id) as EntryRow[]
       ).map(rowToEntry)
+    }
+  )
+
+  /**
+   * Import mapping entries from an Excel/CSV file.
+   * sourceKeyCol and targetKeyCol are the column header names in the file.
+   * Replaces all existing entries for the mapping.
+   */
+  ipcMain.handle(
+    'plmappings:importEntriesFromFile',
+    async (_e, id: string, filePath: string, sourceKeyCol: string, targetKeyCol: string) => {
+      const { rows } = parseFile(filePath)
+      const db = getDb()
+      const del = db.prepare('DELETE FROM picklist_mapping_entries WHERE mapping_id = ?')
+      const ins = db.prepare(`
+        INSERT INTO picklist_mapping_entries (id, mapping_id, source_key, target_key)
+        VALUES (?, ?, ?, ?)
+      `)
+
+      const importAll = db.transaction(() => {
+        del.run(id)
+        rows.forEach(row => {
+          const sourceKey = (row[sourceKeyCol] ?? '').trim()
+          const targetKey = (row[targetKeyCol] ?? '').trim()
+          if (!sourceKey || !targetKey) return
+          ins.run(crypto.randomUUID(), id, sourceKey, targetKey)
+        })
+      })
+      importAll()
+
+      const count = (db.prepare('SELECT COUNT(*) as c FROM picklist_mapping_entries WHERE mapping_id = ?').get(id) as { c: number }).c
+      return { entryCount: count }
+    }
+  )
+
+  /**
+   * Bulk-import picklist mappings from a multi-sheet Excel file.
+   * Each sheet becomes one mapping (named after the sheet).
+   * Required columns: "source_key" and "target_key" (case-insensitive).
+   * If a mapping with the same name already exists, its entries are replaced.
+   */
+  ipcMain.handle(
+    'plmappings:bulkImportFromFile',
+    async (_e, filePath: string) => {
+      const db = getDb()
+      const projectId = getProjectId()
+      const sheets = parseAllSheets(filePath)
+
+      const results: Array<{ name: string; created: boolean; entryCount: number }> = []
+      const errors: Array<{ name: string; error: string }> = []
+
+      const findCol = (headers: string[], names: string[]): string | undefined =>
+        headers.find(h => names.includes(h.toLowerCase()))
+
+      const insMapping = db.prepare(`
+        INSERT INTO picklist_mappings (id, project_id, name, source_picklist_id, target_picklist_id, created_at)
+        VALUES (?, ?, ?, NULL, NULL, ?)
+      `)
+      const delEntries = db.prepare('DELETE FROM picklist_mapping_entries WHERE mapping_id = ?')
+      const insEntry = db.prepare(`
+        INSERT INTO picklist_mapping_entries (id, mapping_id, source_key, target_key)
+        VALUES (?, ?, ?, ?)
+      `)
+
+      for (const { sheetName, headers, rows } of sheets) {
+        const name = sheetName.trim()
+        if (!name) continue
+
+        const sourceKeyCol = findCol(headers, ['source_key', 'source key', 'sourcekey'])
+        const targetKeyCol = findCol(headers, ['target_key', 'target key', 'targetkey'])
+
+        if (!sourceKeyCol || !targetKeyCol) {
+          const missing = [!sourceKeyCol && 'source_key', !targetKeyCol && 'target_key'].filter(Boolean).join(', ')
+          errors.push({ name, error: `Missing column(s): ${missing}. Headers: ${headers.join(', ') || '(empty)'}` })
+          continue
+        }
+
+        const importSheet = db.transaction(() => {
+          let mapping = db.prepare(
+            'SELECT * FROM picklist_mappings WHERE project_id = ? AND name = ?'
+          ).get(projectId, name) as MappingRow | undefined
+
+          let created = false
+          if (!mapping) {
+            const newId = crypto.randomUUID()
+            insMapping.run(newId, projectId, name, new Date().toISOString())
+            mapping = db.prepare('SELECT * FROM picklist_mappings WHERE id = ?').get(newId) as MappingRow
+            created = true
+          }
+
+          delEntries.run(mapping.id)
+          let count = 0
+          for (const row of rows) {
+            const sourceKey = (row[sourceKeyCol] ?? '').trim()
+            const targetKey = (row[targetKeyCol] ?? '').trim()
+            if (!sourceKey || !targetKey) continue
+            insEntry.run(crypto.randomUUID(), mapping.id, sourceKey, targetKey)
+            count++
+          }
+
+          return { created, entryCount: count }
+        })
+
+        try {
+          const { created, entryCount } = importSheet()
+          results.push({ name, created, entryCount })
+        } catch (e) {
+          errors.push({ name, error: e instanceof Error ? e.message : String(e) })
+        }
+      }
+
+      return { results, errors }
     }
   )
 }

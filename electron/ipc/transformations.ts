@@ -25,6 +25,7 @@ interface FieldMappingRow {
   rule_type: string
   rule_config: string
   notes: string | null
+  map_node_id: string | null
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -50,6 +51,7 @@ function rowToFieldMapping(r: FieldMappingRow) {
     ruleType: r.rule_type,
     ruleConfig: r.rule_config,
     notes: r.notes ?? undefined,
+    mapNodeId: r.map_node_id ?? undefined,
   }
 }
 
@@ -68,6 +70,10 @@ export function registerTransformationHandlers(): void {
   ipcMain.handle('transformations:create', async (_e, name: string, description?: string) => {
     const db = getDb()
     const projectId = getProjectId()
+
+    const dup = db.prepare('SELECT COUNT(*) as c FROM transformations WHERE project_id = ? AND name = ?').get(projectId, name) as { c: number }
+    if (dup.c > 0) throw new Error(`A transformation named "${name}" already exists.`)
+
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
 
@@ -105,8 +111,14 @@ export function registerTransformationHandlers(): void {
     async (_e, id: string, updates: Partial<{ name: string; description: string }>) => {
       const db = getDb()
       const now = new Date().toISOString()
-      if (updates.name !== undefined)
+      if (updates.name !== undefined) {
+        const cur = db.prepare('SELECT project_id FROM transformations WHERE id = ?').get(id) as { project_id: string } | undefined
+        if (cur) {
+          const dup = db.prepare('SELECT COUNT(*) as c FROM transformations WHERE project_id = ? AND name = ? AND id != ?').get(cur.project_id, updates.name, id) as { c: number }
+          if (dup.c > 0) throw new Error(`A transformation named "${updates.name}" already exists.`)
+        }
         db.prepare('UPDATE transformations SET name = ?, updated_at = ? WHERE id = ?').run(updates.name, now, id)
+      }
       if ('description' in updates)
         db.prepare('UPDATE transformations SET description = ?, updated_at = ? WHERE id = ?').run(updates.description ?? null, now, id)
       return rowToTransformation(db.prepare('SELECT * FROM transformations WHERE id = ?').get(id) as TransformationRow)
@@ -130,6 +142,47 @@ export function registerTransformationHandlers(): void {
     db.prepare('DELETE FROM transformations WHERE id = ?').run(id)
   })
 
+  /** Duplicate a transformation (new name, same canvas state and field mappings). */
+  ipcMain.handle('transformations:duplicate', async (_e, id: string) => {
+    const db = getDb()
+    const projectId = getProjectId()
+    const src = db.prepare('SELECT * FROM transformations WHERE id = ?').get(id) as TransformationRow | undefined
+    if (!src) throw new Error(`Transformation ${id} not found.`)
+
+    const newId = crypto.randomUUID()
+    const now = new Date().toISOString()
+
+    // Find a unique name: "X (copy)", "X (copy 2)", "X (copy 3)", …
+    const existingNames = (db.prepare('SELECT name FROM transformations WHERE project_id = ?').all(projectId) as { name: string }[]).map(r => r.name)
+    let newName = `${src.name} (copy)`
+    let suffix = 2
+    while (existingNames.includes(newName)) {
+      newName = `${src.name} (copy ${suffix++})`
+    }
+
+    db.prepare(`
+      INSERT INTO transformations (id, project_id, name, description, canvas_state, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(newId, projectId, newName, src.description, src.canvas_state, now, now)
+
+    // Copy all field mappings with new IDs
+    const mappings = db.prepare(
+      'SELECT * FROM field_mappings WHERE transformation_id = ?'
+    ).all(id) as FieldMappingRow[]
+
+    for (const m of mappings) {
+      db.prepare(`
+        INSERT INTO field_mappings
+          (id, transformation_id, target_object_id, target_field_id, rule_type, rule_config, notes, map_node_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(crypto.randomUUID(), newId, m.target_object_id, m.target_field_id, m.rule_type, m.rule_config, m.notes, m.map_node_id)
+    }
+
+    return rowToTransformation(
+      db.prepare('SELECT * FROM transformations WHERE id = ?').get(newId) as TransformationRow
+    )
+  })
+
   // ── Field mapping rules ──────────────────────────────────────────────────────
 
   /** Create a new field mapping rule. */
@@ -142,20 +195,28 @@ export function registerTransformationHandlers(): void {
       targetFieldId: string,
       ruleType: string,
       ruleConfig: string,
-      notes?: string
+      notes?: string,
+      mapNodeId?: string
     ) => {
       const db = getDb()
-      // Remove any existing mapping for the same target field in this transformation
-      db.prepare(
-        'DELETE FROM field_mappings WHERE transformation_id = ? AND target_field_id = ?'
-      ).run(transformationId, targetFieldId)
+      // Remove any existing mapping for the same target field, scoped to the same MapNode
+      // (or to legacy null-scoped mappings when mapNodeId is absent).
+      if (mapNodeId) {
+        db.prepare(
+          'DELETE FROM field_mappings WHERE transformation_id = ? AND target_field_id = ? AND map_node_id = ?'
+        ).run(transformationId, targetFieldId, mapNodeId)
+      } else {
+        db.prepare(
+          'DELETE FROM field_mappings WHERE transformation_id = ? AND target_field_id = ? AND map_node_id IS NULL'
+        ).run(transformationId, targetFieldId)
+      }
 
       const id = crypto.randomUUID()
       db.prepare(`
         INSERT INTO field_mappings
-          (id, transformation_id, target_object_id, target_field_id, rule_type, rule_config, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(id, transformationId, targetObjectId, targetFieldId, ruleType, ruleConfig, notes ?? null)
+          (id, transformation_id, target_object_id, target_field_id, rule_type, rule_config, notes, map_node_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, transformationId, targetObjectId, targetFieldId, ruleType, ruleConfig, notes ?? null, mapNodeId ?? null)
 
       return rowToFieldMapping(
         db.prepare('SELECT * FROM field_mappings WHERE id = ?').get(id) as FieldMappingRow
@@ -197,5 +258,19 @@ export function registerTransformationHandlers(): void {
       'SELECT * FROM field_mappings WHERE transformation_id = ?'
     ).all(transformationId) as FieldMappingRow[]
     return rows.map(rowToFieldMapping)
+  })
+
+  /** Get field mapping rules owned by a specific MapNode. */
+  ipcMain.handle('transformations:getFieldMappingsByNode', async (_e, mapNodeId: string) => {
+    const db = getDb()
+    const rows = db.prepare(
+      'SELECT * FROM field_mappings WHERE map_node_id = ?'
+    ).all(mapNodeId) as FieldMappingRow[]
+    return rows.map(rowToFieldMapping)
+  })
+
+  /** Delete all field mapping rules owned by a specific MapNode. */
+  ipcMain.handle('transformations:deleteFieldMappingsByNode', async (_e, mapNodeId: string) => {
+    getDb().prepare('DELETE FROM field_mappings WHERE map_node_id = ?').run(mapNodeId)
   })
 }

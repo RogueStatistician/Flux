@@ -146,6 +146,25 @@ export function PicklistDetailOverlay({ picklist, onClose, onUpdated }: Props) {
     setImportHeaders(headers)
   }
 
+  // ── Template download ─────────────────────────────────────────────────────
+
+  const handleDownloadTemplate = async () => {
+    const result = await window.electronAPI.saveFile({
+      title: 'Save picklist template',
+      defaultPath: `${picklist.name.replace(/\s+/g, '_')}_template.csv`,
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    })
+    if (result.canceled || !result.filePath) return
+    const csv = 'key,label\nVALUE_A,Label A\nVALUE_B,Label B'
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = result.filePath.split(/[\\/]/).pop() ?? 'template.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const handleColumnConfirm = async (keyCol: string, labelCol: string | undefined) => {
     if (!importFilePath) return
     setImportHeaders(null)
@@ -208,6 +227,13 @@ export function PicklistDetailOverlay({ picklist, onClose, onUpdated }: Props) {
               className="text-xs text-gray-500 hover:text-gray-700"
             >
               ↑ Import from file
+            </button>
+            <span className="text-gray-200">|</span>
+            <button
+              onClick={handleDownloadTemplate}
+              className="text-xs text-gray-500 hover:text-gray-700"
+            >
+              ↓ Download template
             </button>
           </div>
 

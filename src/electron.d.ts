@@ -39,6 +39,7 @@ interface ElectronAPI {
   updateProject(fields: Partial<{ name: string; description: string; client: string }>): Promise<ProjectMeta>
   getProjectMeta(): Promise<ProjectMeta | null>
   listRecentProjects(): Promise<RecentProject[]>
+  removeRecentProject(filePath: string): Promise<void>
   deleteProject(): Promise<void>
 
   // ── Objects & Fields ───────────────────────────────────────────────────────
@@ -71,7 +72,7 @@ interface ElectronAPI {
   getObject(id: string): Promise<{ object: DataObject; fields: ObjectField[] }>
   updateObject(id: string, updates: Partial<{ name: string; description: string; systemName: string; outputFormat: OutputFormat }>): Promise<DataObject>
   deleteObject(id: string): Promise<void>
-  importRows(id: string, filePath: string, options?: { separator?: string; skipRows?: number; skipColumns?: number }): Promise<{ rowCount: number }>
+  importRows(id: string, filePath: string, options?: { separator?: string; skipRows?: number; dataStartRow?: number; skipColumns?: number }): Promise<{ rowCount: number }>
   getRows(id: string, offset: number, limit: number): Promise<{ rows: Record<string, string>[]; total: number }>
   upsertFields(objectId: string, fields: Omit<ObjectField, 'id' | 'objectId' | 'position'>[]): Promise<ObjectField[]>
 
@@ -83,6 +84,10 @@ interface ElectronAPI {
   deletePicklist(id: string): Promise<void>
   setPicklistValues(id: string, values: Array<{ key: string; label?: string }>): Promise<PicklistValue[]>
   importPicklistFromFile(id: string, filePath: string, keyCol: string, labelCol?: string): Promise<{ valueCount: number }>
+  bulkImportPicklistsFromFile(filePath: string, side: 'source' | 'target'): Promise<{
+    results: Array<{ name: string; created: boolean; valueCount: number }>
+    errors: Array<{ name: string; error: string }>
+  }>
 
   // ── Picklist Mappings ──────────────────────────────────────────────────────
   createPlMapping(name: string, sourcePicklistId?: string, targetPicklistId?: string): Promise<PicklistMapping>
@@ -91,6 +96,11 @@ interface ElectronAPI {
   updatePlMapping(id: string, updates: Partial<{ name: string; sourcePicklistId: string | null; targetPicklistId: string | null }>): Promise<PicklistMapping>
   deletePlMapping(id: string): Promise<void>
   setPlMappingEntries(id: string, entries: Array<{ sourceKey: string; targetKey: string }>): Promise<PicklistMappingEntry[]>
+  importPlMappingEntriesFromFile(id: string, filePath: string, sourceKeyCol: string, targetKeyCol: string): Promise<{ entryCount: number }>
+  bulkImportPlMappingsFromFile(filePath: string): Promise<{
+    results: Array<{ name: string; created: boolean; entryCount: number }>
+    errors: Array<{ name: string; error: string }>
+  }>
 
   // ── Transformations ────────────────────────────────────────────────────────
   createTransformation(name: string, description?: string): Promise<Transformation>
@@ -99,11 +109,14 @@ interface ElectronAPI {
   updateTransformation(id: string, updates: Partial<{ name: string; description: string }>): Promise<Transformation>
   saveCanvas(id: string, canvasState: string): Promise<void>
   deleteTransformation(id: string): Promise<void>
-  createFieldMapping(transformationId: string, targetObjectId: string, targetFieldId: string, ruleType: string, ruleConfig: string, notes?: string): Promise<FieldMapping>
+  duplicateTransformation(id: string): Promise<Transformation>
+  createFieldMapping(transformationId: string, targetObjectId: string, targetFieldId: string, ruleType: string, ruleConfig: string, notes?: string, mapNodeId?: string): Promise<FieldMapping>
   updateFieldMapping(id: string, updates: Partial<{ ruleType: string; ruleConfig: string; notes: string }>): Promise<FieldMapping>
   deleteFieldMapping(id: string): Promise<void>
   deleteFieldMappingsByTarget(transformationId: string, targetObjectId: string): Promise<void>
   getFieldMappings(transformationId: string): Promise<FieldMapping[]>
+  getFieldMappingsByNode(mapNodeId: string): Promise<FieldMapping[]>
+  deleteFieldMappingsByNode(mapNodeId: string): Promise<void>
 
   // ── Runs & export ──────────────────────────────────────────────────────────
   startRun(transformationId: string): Promise<string>
@@ -112,6 +125,7 @@ interface ElectronAPI {
   listRuns(transformationId?: string): Promise<Run[]>
   getRunIssues(runId: string, severity?: IssueSeverity): Promise<RunIssue[]>
   saveOutput(runId: string, targetObjectId: string, destPath: string): Promise<void>
+  previewOutput(runId: string, targetObjectId: string, limit?: number): Promise<{ headers: string[]; rows: Record<string, string>[]; totalRows: number }>
   onRunProgress(callback: (data: RunProgressEvent) => void): () => void
 
   // ── Dialogs ────────────────────────────────────────────────────────────────

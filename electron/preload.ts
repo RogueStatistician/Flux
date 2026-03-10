@@ -26,6 +26,9 @@ const electronAPI = {
   listRecentProjects: () =>
     ipcRenderer.invoke('project:listRecents'),
 
+  removeRecentProject: (filePath: string) =>
+    ipcRenderer.invoke('project:removeRecent', filePath),
+
   deleteProject: () =>
     ipcRenderer.invoke('project:delete'),
 
@@ -58,7 +61,7 @@ const electronAPI = {
   deleteObject: (id: string) =>
     ipcRenderer.invoke('objects:delete', id),
 
-  importRows: (id: string, filePath: string, options?: { separator?: string; skipRows?: number; skipColumns?: number }) =>
+  importRows: (id: string, filePath: string, options?: { separator?: string; skipRows?: number; dataStartRow?: number; skipColumns?: number }) =>
     ipcRenderer.invoke('objects:importRows', id, filePath, options),
 
   getRows: (id: string, offset: number, limit: number) =>
@@ -89,6 +92,9 @@ const electronAPI = {
   importPicklistFromFile: (id: string, filePath: string, keyCol: string, labelCol?: string) =>
     ipcRenderer.invoke('picklists:importFromFile', id, filePath, keyCol, labelCol),
 
+  bulkImportPicklistsFromFile: (filePath: string, side: 'source' | 'target') =>
+    ipcRenderer.invoke('picklists:bulkImportFromFile', filePath, side),
+
   // ── Picklist Mappings ──────────────────────────────────────────────────────
   createPlMapping: (name: string, sourcePicklistId?: string, targetPicklistId?: string) =>
     ipcRenderer.invoke('plmappings:create', name, sourcePicklistId, targetPicklistId),
@@ -107,6 +113,12 @@ const electronAPI = {
 
   setPlMappingEntries: (id: string, entries: Array<{ sourceKey: string; targetKey: string }>) =>
     ipcRenderer.invoke('plmappings:setEntries', id, entries),
+
+  importPlMappingEntriesFromFile: (id: string, filePath: string, sourceKeyCol: string, targetKeyCol: string) =>
+    ipcRenderer.invoke('plmappings:importEntriesFromFile', id, filePath, sourceKeyCol, targetKeyCol),
+
+  bulkImportPlMappingsFromFile: (filePath: string) =>
+    ipcRenderer.invoke('plmappings:bulkImportFromFile', filePath),
 
   // ── Transformations ────────────────────────────────────────────────────────
   createTransformation: (name: string, description?: string) =>
@@ -127,8 +139,11 @@ const electronAPI = {
   deleteTransformation: (id: string) =>
     ipcRenderer.invoke('transformations:delete', id),
 
-  createFieldMapping: (transformationId: string, targetObjectId: string, targetFieldId: string, ruleType: string, ruleConfig: string, notes?: string) =>
-    ipcRenderer.invoke('transformations:createFieldMapping', transformationId, targetObjectId, targetFieldId, ruleType, ruleConfig, notes),
+  duplicateTransformation: (id: string) =>
+    ipcRenderer.invoke('transformations:duplicate', id),
+
+  createFieldMapping: (transformationId: string, targetObjectId: string, targetFieldId: string, ruleType: string, ruleConfig: string, notes?: string, mapNodeId?: string) =>
+    ipcRenderer.invoke('transformations:createFieldMapping', transformationId, targetObjectId, targetFieldId, ruleType, ruleConfig, notes, mapNodeId),
 
   updateFieldMapping: (id: string, updates: Partial<{ ruleType: string; ruleConfig: string; notes: string }>) =>
     ipcRenderer.invoke('transformations:updateFieldMapping', id, updates),
@@ -141,6 +156,12 @@ const electronAPI = {
 
   getFieldMappings: (transformationId: string) =>
     ipcRenderer.invoke('transformations:getFieldMappings', transformationId),
+
+  getFieldMappingsByNode: (mapNodeId: string) =>
+    ipcRenderer.invoke('transformations:getFieldMappingsByNode', mapNodeId),
+
+  deleteFieldMappingsByNode: (mapNodeId: string) =>
+    ipcRenderer.invoke('transformations:deleteFieldMappingsByNode', mapNodeId),
 
   // ── Runs & export ──────────────────────────────────────────────────────────
   startRun: (transformationId: string) =>
@@ -160,6 +181,9 @@ const electronAPI = {
 
   saveOutput: (runId: string, targetObjectId: string, destPath: string) =>
     ipcRenderer.invoke('export:saveOutput', runId, targetObjectId, destPath),
+
+  previewOutput: (runId: string, targetObjectId: string, limit?: number) =>
+    ipcRenderer.invoke('run:previewOutput', runId, targetObjectId, limit),
 
   onRunProgress: (callback: (data: Record<string, unknown>) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data)

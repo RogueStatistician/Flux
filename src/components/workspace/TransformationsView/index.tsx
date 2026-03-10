@@ -1,6 +1,67 @@
-import { useState, useEffect, useCallback } from 'react'
-import type { Transformation, FieldMapping } from '../../../types/index.js'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import type { Transformation } from '../../../types/index.js'
 import { TransformationEditor } from '../TransformationEditor/index.js'
+
+/** Strip Electron's "Error invoking remote method '...': Error: " prefix. */
+function ipcMsg(e: unknown): string {
+  const msg = e instanceof Error ? e.message : 'Something went wrong.'
+  const idx = msg.lastIndexOf(': Error: ')
+  return idx !== -1 ? msg.slice(idx + 9) : msg
+}
+
+// ── Context Menu ──────────────────────────────────────────────────────────────
+
+function CardMenu({
+  x, y,
+  onRename,
+  onDuplicate,
+  onDelete,
+  onClose,
+}: {
+  x: number; y: number
+  onRename: () => void
+  onDuplicate: () => void
+  onDelete: () => void
+  onClose: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  return (
+    <div
+      ref={ref}
+      style={{ top: y, left: x }}
+      className="fixed z-50 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[140px] text-sm"
+    >
+      <button
+        onClick={(e) => { e.stopPropagation(); onRename(); onClose() }}
+        className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
+      >
+        Rename
+      </button>
+      <button
+        onClick={(e) => { e.stopPropagation(); onDuplicate(); onClose() }}
+        className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
+      >
+        Duplicate
+      </button>
+      <div className="border-t border-gray-100 my-1" />
+      <button
+        onClick={(e) => { e.stopPropagation(); onDelete(); onClose() }}
+        className="w-full text-left px-3 py-1.5 hover:bg-red-50 text-red-600"
+      >
+        Delete
+      </button>
+    </div>
+  )
+}
 
 // ── Transformation Card ───────────────────────────────────────────────────────
 
@@ -9,62 +70,79 @@ function TransformationCard({
   mappingCount,
   onClick,
   onDelete,
+  onDuplicate,
+  onRenameRequest,
 }: {
   transformation: Transformation
   mappingCount: number
   onClick: () => void
   onDelete: () => void
+  onDuplicate: () => void
+  onRenameRequest: () => void
 }) {
-  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
 
-  const handleDelete = async (e: React.MouseEvent) => {
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
     e.stopPropagation()
-    if (!confirmDelete) { setConfirmDelete(true); return }
-    await window.electronAPI.deleteTransformation(transformation.id)
-    onDelete()
+    setMenu({ x: e.clientX, y: e.clientY })
+  }
+
+  const handleMenuButton = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setMenu({ x: rect.left, y: rect.bottom + 4 })
   }
 
   const updatedAt = new Date(transformation.updatedAt).toLocaleDateString()
 
   return (
-    <div
-      onClick={onClick}
-      className="group bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:border-violet-300 hover:shadow-sm transition-all"
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-gray-800 truncate">{transformation.name}</p>
-          {transformation.description && (
-            <p className="text-xs text-gray-400 mt-0.5 truncate">{transformation.description}</p>
-          )}
+    <>
+      <div
+        onClick={onClick}
+        onContextMenu={handleContextMenu}
+        className="group relative bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:border-violet-300 hover:shadow-sm transition-all"
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-gray-800 break-words">{transformation.name}</p>
+            {transformation.description && (
+              <p className="text-xs text-gray-400 mt-0.5 break-words">{transformation.description}</p>
+            )}
+          </div>
+          <button
+            onClick={handleMenuButton}
+            className="shrink-0 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 px-1 py-0.5 rounded transition-colors leading-none"
+          >
+            ···
+          </button>
         </div>
-        <button
-          onClick={handleDelete}
-          onBlur={() => setConfirmDelete(false)}
-          className={[
-            'shrink-0 text-xs px-2 py-0.5 rounded transition-colors opacity-0 group-hover:opacity-100',
-            confirmDelete
-              ? 'bg-red-100 text-red-600 hover:bg-red-200'
-              : 'text-gray-400 hover:text-red-500',
-          ].join(' ')}
-        >
-          {confirmDelete ? 'Confirm' : '✕'}
-        </button>
+
+        <div className="mt-3 flex items-center gap-3 text-xs text-gray-400">
+          <span className="bg-violet-50 text-violet-700 px-2 py-0.5 rounded font-medium">
+            {mappingCount} rule{mappingCount !== 1 ? 's' : ''}
+          </span>
+          <span>Updated {updatedAt}</span>
+        </div>
+
+        <div className="mt-3">
+          <span className="text-xs text-violet-600 font-medium group-hover:underline">
+            Open editor →
+          </span>
+        </div>
       </div>
 
-      <div className="mt-3 flex items-center gap-3 text-xs text-gray-400">
-        <span className="bg-violet-50 text-violet-700 px-2 py-0.5 rounded font-medium">
-          {mappingCount} rule{mappingCount !== 1 ? 's' : ''}
-        </span>
-        <span>Updated {updatedAt}</span>
-      </div>
-
-      <div className="mt-3">
-        <span className="text-xs text-violet-600 font-medium group-hover:underline">
-          Open editor →
-        </span>
-      </div>
-    </div>
+      {menu && (
+        <CardMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          onRename={onRenameRequest}
+          onDuplicate={onDuplicate}
+          onDelete={onDelete}
+        />
+      )}
+    </>
   )
 }
 
@@ -81,6 +159,14 @@ export function TransformationsView() {
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
   const [creating, setCreating] = useState(false)
+
+  // Rename state
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
+
+  // Create form error
+  const [createError, setCreateError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const all = await window.electronAPI.listTransformations()
@@ -99,6 +185,7 @@ export function TransformationsView() {
   const handleCreate = async () => {
     if (!newName.trim()) return
     setCreating(true)
+    setCreateError(null)
     try {
       const t = await window.electronAPI.createTransformation(newName.trim(), newDesc.trim() || undefined)
       setTransformations(prev => [...prev, t])
@@ -108,13 +195,41 @@ export function TransformationsView() {
       setShowForm(false)
       // Open editor immediately
       setEditingId(t.id)
+    } catch (e) {
+      setCreateError(ipcMsg(e))
     } finally {
       setCreating(false)
     }
   }
 
-  const handleDeleted = (id: string) => {
+  const handleDelete = async (id: string) => {
+    await window.electronAPI.deleteTransformation(id)
     setTransformations(prev => prev.filter(t => t.id !== id))
+  }
+
+  const handleDuplicate = async (id: string) => {
+    const copy = await window.electronAPI.duplicateTransformation(id)
+    const mappings = await window.electronAPI.getFieldMappings(copy.id)
+    setTransformations(prev => [...prev, copy])
+    setMappingCounts(prev => ({ ...prev, [copy.id]: mappings.length }))
+  }
+
+  const startRename = (t: Transformation) => {
+    setRenamingId(t.id)
+    setRenameValue(t.name)
+    setRenameError(null)
+  }
+
+  const commitRename = async () => {
+    if (!renamingId || !renameValue.trim()) { setRenamingId(null); return }
+    setRenameError(null)
+    try {
+      const updated = await window.electronAPI.updateTransformation(renamingId, { name: renameValue.trim() })
+      setTransformations(prev => prev.map(t => t.id === updated.id ? updated : t))
+      setRenamingId(null)
+    } catch (e) {
+      setRenameError(ipcMsg(e))
+    }
   }
 
   const handleEditorBack = useCallback(() => {
@@ -161,11 +276,12 @@ export function TransformationsView() {
             <input
               autoFocus
               value={newName}
-              onChange={e => setNewName(e.target.value)}
+              onChange={e => { setNewName(e.target.value); setCreateError(null) }}
               onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') setShowForm(false) }}
               placeholder="Transformation name *"
-              className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+              className={`w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 ${createError ? 'border-red-300 focus:ring-red-400' : 'border-gray-200 focus:ring-violet-500'}`}
             />
+            {createError && <p className="text-xs text-red-500">{createError}</p>}
             <input
               value={newDesc}
               onChange={e => setNewDesc(e.target.value)}
@@ -182,6 +298,33 @@ export function TransformationsView() {
             >
               {creating ? '…' : 'Create & open'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Rename dialog */}
+      {renamingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20" onClick={() => setRenamingId(null)}>
+          <div className="bg-white rounded-xl shadow-xl p-5 w-80" onClick={e => e.stopPropagation()}>
+            <p className="text-sm font-semibold text-gray-800 mb-3">Rename transformation</p>
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={e => { setRenameValue(e.target.value); setRenameError(null) }}
+              onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenamingId(null) }}
+              className={`w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 ${renameError ? 'border-red-300 focus:ring-red-400' : 'border-gray-200 focus:ring-violet-500'}`}
+            />
+            {renameError && <p className="text-xs text-red-500 mt-1">{renameError}</p>}
+            <div className="flex justify-end gap-2 mt-3">
+              <button onClick={() => setRenamingId(null)} className="text-sm text-gray-500 hover:text-gray-700 px-3 py-1.5">Cancel</button>
+              <button
+                onClick={commitRename}
+                disabled={!renameValue.trim()}
+                className="px-4 py-1.5 bg-violet-600 text-white text-sm rounded-lg hover:bg-violet-700 disabled:opacity-40"
+              >
+                Rename
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -210,7 +353,9 @@ export function TransformationsView() {
                 transformation={t}
                 mappingCount={mappingCounts[t.id] ?? 0}
                 onClick={() => setEditingId(t.id)}
-                onDelete={() => handleDeleted(t.id)}
+                onDelete={() => handleDelete(t.id)}
+                onDuplicate={() => handleDuplicate(t.id)}
+                onRenameRequest={() => startRename(t)}
               />
             ))}
           </div>

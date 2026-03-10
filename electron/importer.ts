@@ -27,6 +27,12 @@ export interface ParseOptions {
    */
   skipRows?: number
   /**
+   * 0-based index of the first row that contains actual data (default: skipRows + 1).
+   * Use when there are rows between the header and the first data row (e.g. example
+   * rows, sub-headers) that should be skipped.
+   */
+  dataStartRow?: number
+  /**
    * Number of leading columns to skip (default: 0).
    * Columns to the left of this offset are excluded from headers and row data.
    */
@@ -72,6 +78,7 @@ export function parseFile(
   })
 
   const headerRowIndex = options?.skipRows ?? 0
+  const dataFirstRow = options?.dataStartRow ?? (headerRowIndex + 1)
   const startCol = options?.skipColumns ?? 0
   if (raw.length <= headerRowIndex) return { headers: [], rows: [] }
 
@@ -81,9 +88,9 @@ export function parseFile(
     .filter(Boolean)
 
   const end = maxRows !== undefined
-    ? Math.min(raw.length, maxRows + headerRowIndex + 1)
+    ? Math.min(raw.length, dataFirstRow + maxRows)
     : raw.length
-  const rows = raw.slice(headerRowIndex + 1, end).map(row => {
+  const rows = raw.slice(dataFirstRow, end).map(row => {
     const r = row as unknown[]
     const obj: Record<string, string> = {}
     headers.forEach((h, i) => { obj[h] = String(r[startCol + i] ?? '') })
@@ -98,6 +105,35 @@ export function parseFile(
  */
 export function parseHeaders(filePath: string, options?: ParseOptions): string[] {
   return parseFile(filePath, 0, options).headers
+}
+
+/**
+ * Parse every sheet in an Excel workbook (or the single sheet of a CSV).
+ * Each entry contains the sheet name, headers, and all data rows.
+ */
+export function parseAllSheets(filePath: string): Array<{
+  sheetName: string
+  headers: string[]
+  rows: Record<string, string>[]
+}> {
+  const buf = fs.readFileSync(filePath)
+  const isCsv = /\.(csv|tsv|txt)$/i.test(filePath)
+  const readOpts: XLSX.ParsingOptions = { raw: isCsv, cellDates: false }
+  const workbook = XLSX.read(buf, readOpts)
+
+  return workbook.SheetNames.map(sheetName => {
+    const sheet = workbook.Sheets[sheetName]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', raw: false })
+    if (raw.length === 0) return { sheetName, headers: [], rows: [] }
+    const headers = (raw[0] as unknown[]).map(h => String(h ?? '').trim()).filter(Boolean)
+    const rows = raw.slice(1).map(row => {
+      const r = row as unknown[]
+      const obj: Record<string, string> = {}
+      headers.forEach((h, i) => { obj[h] = String(r[i] ?? '') })
+      return obj
+    })
+    return { sheetName, headers, rows }
+  })
 }
 
 // ── Schema inference ──────────────────────────────────────────────────────────

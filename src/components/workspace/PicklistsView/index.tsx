@@ -2,6 +2,51 @@ import { useState, useEffect, useCallback } from 'react'
 import type { Picklist, PicklistSide } from '../../../types/index.js'
 import { PicklistDetailOverlay } from '../PicklistDetailOverlay.js'
 
+// ── Bulk import result dialog ──────────────────────────────────────────────────
+
+interface BulkResult {
+  results: Array<{ name: string; created: boolean; valueCount: number }>
+  errors: Array<{ name: string; error: string }>
+}
+
+function BulkImportResultDialog({ result, onClose }: { result: BulkResult; onClose: () => void }) {
+  const total = result.results.reduce((s, r) => s + r.valueCount, 0)
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-xl shadow-2xl w-[28rem] p-6 max-h-[80vh] flex flex-col">
+        <p className="text-sm font-semibold text-gray-800 mb-1">Bulk import complete</p>
+        <p className="text-xs text-gray-500 mb-4">
+          {result.results.length} picklist{result.results.length !== 1 ? 's' : ''} imported · {total} total values
+        </p>
+        <div className="flex-1 overflow-auto space-y-1 text-xs">
+          {result.results.map(r => (
+            <div key={r.name} className="flex items-center gap-2 px-2 py-1 rounded bg-gray-50">
+              <span className="text-emerald-500 shrink-0">✓</span>
+              <span className="font-medium text-gray-700 flex-1 truncate">{r.name}</span>
+              <span className="text-gray-400 shrink-0">{r.created ? 'created' : 'updated'} · {r.valueCount} values</span>
+            </div>
+          ))}
+          {result.errors.map(e => (
+            <div key={e.name} className="px-2 py-1 rounded bg-red-50 border border-red-100">
+              <p className="font-medium text-red-700">{e.name}</p>
+              <p className="text-red-500 mt-0.5">{e.error}</p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Picklist Card ──────────────────────────────────────────────────────────────
 
 function PicklistCard({
@@ -31,9 +76,9 @@ function PicklistCard({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-gray-800 truncate">{picklist.name}</p>
+          <p className="text-sm font-semibold text-gray-800 break-words">{picklist.name}</p>
           {picklist.description && (
-            <p className="text-xs text-gray-400 mt-0.5 truncate">{picklist.description}</p>
+            <p className="text-xs text-gray-400 mt-0.5 break-words">{picklist.description}</p>
           )}
         </div>
         <button
@@ -65,6 +110,7 @@ function PicklistColumn({
   onSelect,
   onDeleted,
   onCreated,
+  onBulkImported,
 }: {
   side: PicklistSide
   picklists: Picklist[]
@@ -72,11 +118,13 @@ function PicklistColumn({
   onSelect: (pl: Picklist) => void
   onDeleted: (id: string) => void
   onCreated: (pl: Picklist) => void
+  onBulkImported: (result: BulkResult) => void
 }) {
   const [showForm, setShowForm] = useState(false)
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
   const [creating, setCreating] = useState(false)
+  const [bulkImporting, setBulkImporting] = useState(false)
 
   const isSource = side === 'source'
   const accent = isSource ? 'blue' : 'emerald'
@@ -95,6 +143,22 @@ function PicklistColumn({
     }
   }
 
+  const handleBulkImport = async () => {
+    const res = await window.electronAPI.openFile({
+      title: 'Select bulk picklist file',
+      filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
+      properties: ['openFile'],
+    })
+    if (res.canceled || !res.filePaths[0]) return
+    setBulkImporting(true)
+    try {
+      const result = await window.electronAPI.bulkImportPicklistsFromFile(res.filePaths[0], side)
+      onBulkImported(result)
+    } finally {
+      setBulkImporting(false)
+    }
+  }
+
   return (
     <div className="flex-1 flex flex-col min-w-0 border-r last:border-r-0 border-gray-100">
       {/* Column header */}
@@ -105,12 +169,22 @@ function PicklistColumn({
           </p>
           <p className="text-xs text-gray-400 mt-0.5">{picklists.length} list{picklists.length !== 1 ? 's' : ''}</p>
         </div>
-        <button
-          onClick={() => setShowForm(v => !v)}
-          className={`text-xs px-3 py-1.5 bg-${accent}-600 text-white rounded-lg hover:bg-${accent}-700 transition-colors font-medium`}
-        >
-          + New
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleBulkImport}
+            disabled={bulkImporting}
+            className="text-xs text-gray-500 hover:text-gray-700 disabled:opacity-40"
+            title="Import multiple picklists from an Excel file (one sheet per picklist)"
+          >
+            {bulkImporting ? '…' : '↑ Bulk'}
+          </button>
+          <button
+            onClick={() => setShowForm(v => !v)}
+            className={`text-xs px-3 py-1.5 bg-${accent}-600 text-white rounded-lg hover:bg-${accent}-700 transition-colors font-medium`}
+          >
+            + New
+          </button>
+        </div>
       </div>
 
       {/* New picklist form */}
@@ -173,6 +247,7 @@ export function PicklistsView() {
   const [valueCounts, setValueCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Picklist | null>(null)
+  const [bulkResult, setBulkResult] = useState<BulkResult | null>(null)
 
   const load = useCallback(async () => {
     const all = await window.electronAPI.listPicklists()
@@ -207,6 +282,12 @@ export function PicklistsView() {
     setValueCounts(prev => ({ ...prev, [pl.id]: newCount }))
   }
 
+  const handleBulkImported = (result: BulkResult) => {
+    setBulkResult(result)
+    // Reload all picklists and counts to reflect new/updated ones
+    load()
+  }
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Top bar */}
@@ -229,6 +310,7 @@ export function PicklistsView() {
             onSelect={setSelected}
             onDeleted={handleDeleted}
             onCreated={handleCreated}
+            onBulkImported={handleBulkImported}
           />
           <PicklistColumn
             side="target"
@@ -237,6 +319,7 @@ export function PicklistsView() {
             onSelect={setSelected}
             onDeleted={handleDeleted}
             onCreated={handleCreated}
+            onBulkImported={handleBulkImported}
           />
         </div>
       )}
@@ -247,6 +330,14 @@ export function PicklistsView() {
           picklist={selected}
           onClose={() => setSelected(null)}
           onUpdated={(pl, count) => handleUpdated(pl, count)}
+        />
+      )}
+
+      {/* Bulk import result */}
+      {bulkResult && (
+        <BulkImportResultDialog
+          result={bulkResult}
+          onClose={() => setBulkResult(null)}
         />
       )}
     </div>

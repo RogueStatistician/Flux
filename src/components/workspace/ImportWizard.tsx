@@ -18,6 +18,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { DataObject, InferredField, ObjectRole, OutputFormat, Picklist } from '../../types/index.js'
 
+function ipcMsg(e: unknown): string {
+  const msg = e instanceof Error ? e.message : 'Something went wrong.'
+  const idx = msg.lastIndexOf(': Error: ')
+  return idx !== -1 ? msg.slice(idx + 9) : msg
+}
+
 type Step = 'schema' | 'details' | 'saving'
 type FieldType = InferredField['dataType']
 
@@ -175,7 +181,7 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
       // Convert 1-indexed UI values to 0-indexed for the backend.
       const headerRow0 = Math.max(0, headerRow - 1)
       const dataStartRow0 = Math.max(0, dataStartRow - 1)
-      const templateConfig = (role === 'target' && filePath)
+      const templateConfig = filePath
         ? {
             headerRow: headerRow0,
             // Only store dataStartRow when it differs from the natural default
@@ -202,9 +208,11 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
 
       if (role === 'source' && filePath) {
         const skipRows = Math.max(0, headerRow - 1)
+        const dataStartRow0 = Math.max(0, dataStartRow - 1)
         const opts = {
           ...(isCsv && separator !== ',' ? { separator } : {}),
           ...(skipRows > 0 ? { skipRows } : {}),
+          ...(dataStartRow0 !== skipRows + 1 ? { dataStartRow: dataStartRow0 } : {}),
           ...(skipColumns > 0 ? { skipColumns } : {}),
         }
         await window.electronAPI.importRows(
@@ -215,7 +223,7 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
 
       onDone(object)
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : 'Failed to create object.')
+      setSaveError(ipcMsg(e))
       setStep('details')
     }
   }
@@ -247,7 +255,6 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
         <div className="flex-1 overflow-y-auto p-6">
           {step === 'schema' && (
             <SchemaStep
-              role={role}
               hasFile={!!filePath}
               isCsv={isCsv}
               separator={separator}
@@ -315,7 +322,7 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
 // ── Schema step ───────────────────────────────────────────────────────────────
 
 function SchemaStep({
-  role, hasFile, isCsv,
+  hasFile, isCsv,
   separator, onSeparator,
   headerRow, onHeaderRow,
   dataStartRow, onDataStartRow, dataStartRowLinked,
@@ -323,7 +330,6 @@ function SchemaStep({
   onReInfer,
   loading, error, fields, picklists, onUpdateField, onAddField, onRemoveField,
 }: {
-  role: ObjectRole
   hasFile: boolean
   isCsv: boolean
   separator: string; onSeparator: (v: string) => void
@@ -380,26 +386,24 @@ function SchemaStep({
               className="w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
             />
           </div>
-          {role === 'target' && (
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1">
-                Data starts at row
-                {dataStartRowLinked && (
-                  <span className="ml-1 text-gray-400 font-normal">(auto)</span>
-                )}
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={100}
-                value={dataStartRow}
-                onChange={e => onDataStartRow(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                className={`w-20 border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 ${
-                  dataStartRowLinked ? 'border-gray-200 bg-gray-50 text-gray-400' : 'border-blue-300 bg-white'
-                }`}
-              />
-            </div>
-          )}
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">
+              Data starts at row
+              {dataStartRowLinked && (
+                <span className="ml-1 text-gray-400 font-normal">(auto)</span>
+              )}
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={dataStartRow}
+              onChange={e => onDataStartRow(Math.max(1, parseInt(e.target.value, 10) || 1))}
+              className={`w-20 border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+                dataStartRowLinked ? 'border-gray-200 bg-gray-50 text-gray-400' : 'border-blue-300 bg-white'
+              }`}
+            />
+          </div>
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1">
               Skip columns
@@ -418,9 +422,9 @@ function SchemaStep({
             onClick={onReInfer}
             className="px-3 py-1 text-xs bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 font-medium"
           >
-            ↺ Re-read schema
+            ↺ Refresh columns
           </button>
-          {role === 'target' && (dataStartRow > 1 || skipColumns > 0) && (
+          {(dataStartRow > 1 || skipColumns > 0) && (
             <p className="w-full text-xs text-blue-600 bg-blue-50 rounded px-2 py-1">
               Rows 1–{dataStartRow - 1} and
               {skipColumns > 0 ? ` the first ${skipColumns} column${skipColumns > 1 ? 's' : ''}` : ' all columns'}

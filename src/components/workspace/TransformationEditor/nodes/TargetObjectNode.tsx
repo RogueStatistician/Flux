@@ -5,6 +5,7 @@ export interface TargetNodeData extends Record<string, unknown> {
   objectId: string
   name: string
   systemName?: string
+  columnCount?: number
 }
 
 function TargetObjectNodeInner({ data, selected }: NodeProps) {
@@ -13,7 +14,7 @@ function TargetObjectNodeInner({ data, selected }: NodeProps) {
   return (
     <div
       style={{
-        width: 180,
+        width: 200,
         background: '#f0fdf4',
         border: `2px solid ${selected ? '#16a34a' : '#86efac'}`,
         borderRadius: 10,
@@ -46,15 +47,18 @@ function TargetObjectNodeInner({ data, selected }: NodeProps) {
         <p style={{ fontSize: 9, fontWeight: 700, color: '#14532d', margin: '0 0 3px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
           Target
         </p>
-        <p style={{ fontSize: 12, fontWeight: 700, color: '#15803d', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <p style={{ fontSize: 12, fontWeight: 700, color: '#15803d', margin: 0, overflowWrap: 'break-word', wordBreak: 'break-word' }}>
           {d.name}
         </p>
         {d.systemName && (
-          <p style={{ fontSize: 9, color: '#16a34a', margin: '2px 0 0' }}>{d.systemName}</p>
+          <p style={{ fontSize: 9, color: '#16a34a', margin: '2px 0 0', overflowWrap: 'break-word' }}>{d.systemName}</p>
         )}
       </div>
-      <div style={{ padding: '6px 14px', fontSize: 9, color: '#6b7280' }}>
-        Output destination
+      <div style={{ padding: '6px 14px', fontSize: 9, color: '#6b7280', display: 'flex', justifyContent: 'space-between' }}>
+        <span>Output destination</span>
+        {d.columnCount !== undefined && (
+          <span style={{ color: '#86efac', fontWeight: 600 }}>{d.columnCount} col{d.columnCount !== 1 ? 's' : ''}</span>
+        )}
       </div>
     </div>
   )

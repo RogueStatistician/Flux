@@ -17,7 +17,9 @@ export function decodeField(val: string): { sourceObjectId: string; sourceFieldN
 
 // ── Upstream source discovery ─────────────────────────────────────────────────
 
-/** Finds all upstream sourceObject IDs reachable from nodeId, ignoring handle. */
+/** Finds all upstream sourceObject IDs reachable from nodeId, ignoring handle.
+ *  An appendOperator is treated as a single source boundary: only its first
+ *  upstream source is returned (all appended sources share the same schema). */
 export function findUpstreamSourceIds(nodeId: string, nodes: Node[], edges: Edge[]): string[] {
   const inEdges = edges.filter(e => e.target === nodeId)
   const result: string[] = []
@@ -27,6 +29,10 @@ export function findUpstreamSourceIds(nodeId: string, nodes: Node[], edges: Edge
     if (srcNode.type === 'sourceObject') {
       const objId = (srcNode.data as Record<string, unknown>).objectId as string
       if (objId) result.push(objId)
+    } else if (srcNode.type === 'appendOperator') {
+      // Append unions have a shared schema — expose only the first source
+      const firstSource = findUpstreamSourceIds(srcNode.id, nodes, edges)
+      if (firstSource.length > 0) result.push(firstSource[0])
     } else {
       result.push(...findUpstreamSourceIds(srcNode.id, nodes, edges))
     }
@@ -69,6 +75,7 @@ export function SourceFieldPicker({
   onChange,
   placeholder = '— pick source field —',
   className = '',
+  sourceGroupLabels = {},
 }: {
   value: string
   sourceObjects: DataObject[]
@@ -77,6 +84,8 @@ export function SourceFieldPicker({
   onChange: (val: string) => void
   placeholder?: string
   className?: string
+  /** Override the optgroup label for a given source object ID (e.g. Append node name). */
+  sourceGroupLabels?: Record<string, string>
 }) {
   if (upstreamSourceIds.length === 0) {
     return <span className="text-amber-500 text-xs italic">no source connected</span>
@@ -92,8 +101,9 @@ export function SourceFieldPicker({
         const obj = sourceObjects.find(o => o.id === objId)
         const fields = fieldsMap[objId] ?? []
         if (fields.length === 0) return null
+        const groupLabel = sourceGroupLabels[objId] ?? obj?.name ?? objId
         return (
-          <optgroup key={objId} label={obj?.name ?? objId}>
+          <optgroup key={objId} label={groupLabel}>
             {fields.map(f => (
               <option key={f.id} value={encodeField(objId, f.name)}>{f.name}</option>
             ))}

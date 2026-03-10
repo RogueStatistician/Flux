@@ -55,6 +55,12 @@ export function HomeScreen() {
     }
   }
 
+  const handleRemoveRecent = async (e: React.MouseEvent, filePath: string) => {
+    e.stopPropagation()
+    await window.electronAPI.removeRecentProject(filePath).catch(() => {})
+    setRecents(prev => prev.filter(r => r.filePath !== filePath))
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-8">
       {/* Logo */}
@@ -113,16 +119,27 @@ export function HomeScreen() {
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Recent</p>
           <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
             {recents.map((r, i) => (
-              <button
+              <div
                 key={r.filePath}
-                onClick={() => handleOpenRecent(r.filePath)}
-                className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors ${
+                className={`group flex items-center hover:bg-gray-50 transition-colors ${
                   i > 0 ? 'border-t border-gray-100' : ''
                 }`}
               >
-                <p className="text-sm font-medium text-gray-800 truncate">{r.name}</p>
-                <p className="text-xs text-gray-400 font-mono truncate mt-0.5">{r.filePath}</p>
-              </button>
+                <button
+                  onClick={() => handleOpenRecent(r.filePath)}
+                  className="flex-1 text-left px-4 py-3 min-w-0"
+                >
+                  <p className="text-sm font-medium text-gray-800 break-words">{r.name}</p>
+                  <p className="text-xs text-gray-400 font-mono break-words mt-0.5">{r.filePath}</p>
+                </button>
+                <button
+                  onClick={e => handleRemoveRecent(e, r.filePath)}
+                  title="Remove from list"
+                  className="shrink-0 px-3 py-3 text-gray-200 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                >
+                  ✕
+                </button>
+              </div>
             ))}
           </div>
         </div>

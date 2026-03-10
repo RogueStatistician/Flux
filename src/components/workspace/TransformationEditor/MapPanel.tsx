@@ -2,9 +2,9 @@
  * MapPanel — modal dialog for configuring per-field mapping rules.
  * Opens when clicking a MapOperatorNode.
  */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import type { Node, Edge } from '@xyflow/react'
-import type { DataObject, FieldMapping, ObjectField } from '../../../types/index.js'
+import type { DataObject, FieldMapping, ObjectField, Picklist, PicklistMapping } from '../../../types/index.js'
 import {
   findUpstreamSourceIds,
   encodeField,
@@ -26,13 +26,14 @@ type ConcatPart =
 // ── Per-rule-type config editors ──────────────────────────────────────────────
 
 function DirectEditor({
-  config, onChange, upstreamSourceIds, sourceObjects, fieldsMap,
+  config, onChange, upstreamSourceIds, sourceObjects, fieldsMap, sourceGroupLabels,
 }: {
   config: Record<string, unknown>
   onChange: (c: Record<string, unknown>) => void
   upstreamSourceIds: string[]
   sourceObjects: DataObject[]
   fieldsMap: Record<string, ObjectField[]>
+  sourceGroupLabels?: Record<string, string>
 }) {
   const val = config.sourceObjectId
     ? encodeField(config.sourceObjectId as string, (config.sourceFieldName as string) ?? '')
@@ -43,6 +44,7 @@ function DirectEditor({
       sourceObjects={sourceObjects}
       fieldsMap={fieldsMap}
       upstreamSourceIds={upstreamSourceIds}
+      sourceGroupLabels={sourceGroupLabels}
       onChange={v => {
         if (!v) { onChange({}); return }
         onChange(decodeField(v))
@@ -103,13 +105,14 @@ function ExpressionEditor({ config, onChange }: { config: Record<string, unknown
 }
 
 function ConcatEditor({
-  config, onChange, upstreamSourceIds, sourceObjects, fieldsMap,
+  config, onChange, upstreamSourceIds, sourceObjects, fieldsMap, sourceGroupLabels,
 }: {
   config: Record<string, unknown>
   onChange: (c: Record<string, unknown>) => void
   upstreamSourceIds: string[]
   sourceObjects: DataObject[]
   fieldsMap: Record<string, ObjectField[]>
+  sourceGroupLabels?: Record<string, string>
 }) {
   const parts: ConcatPart[] = (config.parts as ConcatPart[]) ?? []
 
@@ -150,6 +153,7 @@ function ConcatEditor({
               sourceObjects={sourceObjects}
               fieldsMap={fieldsMap}
               upstreamSourceIds={upstreamSourceIds}
+              sourceGroupLabels={sourceGroupLabels}
               onChange={v => {
                 if (!v) { updatePart(i, { type: 'field', sourceObjectId: '', sourceFieldName: '' }); return }
                 const { sourceObjectId, sourceFieldName } = decodeField(v)
@@ -193,13 +197,14 @@ function ConcatEditor({
 }
 
 function SplitEditor({
-  config, onChange, upstreamSourceIds, sourceObjects, fieldsMap,
+  config, onChange, upstreamSourceIds, sourceObjects, fieldsMap, sourceGroupLabels,
 }: {
   config: Record<string, unknown>
   onChange: (c: Record<string, unknown>) => void
   upstreamSourceIds: string[]
   sourceObjects: DataObject[]
   fieldsMap: Record<string, ObjectField[]>
+  sourceGroupLabels?: Record<string, string>
 }) {
   const val = config.sourceObjectId
     ? encodeField(config.sourceObjectId as string, (config.sourceFieldName as string) ?? '')
@@ -211,6 +216,7 @@ function SplitEditor({
         sourceObjects={sourceObjects}
         fieldsMap={fieldsMap}
         upstreamSourceIds={upstreamSourceIds}
+        sourceGroupLabels={sourceGroupLabels}
         onChange={v => {
           if (!v) { onChange({ ...config, sourceObjectId: undefined, sourceFieldName: undefined }); return }
           const { sourceObjectId, sourceFieldName } = decodeField(v)
@@ -242,13 +248,14 @@ const DATE_FORMAT_SUGGESTIONS = [
 ]
 
 function DateFormatEditor({
-  config, onChange, upstreamSourceIds, sourceObjects, fieldsMap,
+  config, onChange, upstreamSourceIds, sourceObjects, fieldsMap, sourceGroupLabels,
 }: {
   config: Record<string, unknown>
   onChange: (c: Record<string, unknown>) => void
   upstreamSourceIds: string[]
   sourceObjects: DataObject[]
   fieldsMap: Record<string, ObjectField[]>
+  sourceGroupLabels?: Record<string, string>
 }) {
   const val = config.sourceObjectId
     ? encodeField(config.sourceObjectId as string, (config.sourceFieldName as string) ?? '')
@@ -260,6 +267,7 @@ function DateFormatEditor({
         sourceObjects={sourceObjects}
         fieldsMap={fieldsMap}
         upstreamSourceIds={upstreamSourceIds}
+        sourceGroupLabels={sourceGroupLabels}
         onChange={v => {
           if (!v) { onChange({ ...config, sourceObjectId: undefined, sourceFieldName: undefined }); return }
           const { sourceObjectId, sourceFieldName } = decodeField(v)
@@ -281,6 +289,227 @@ function DateFormatEditor({
   )
 }
 
+// ── Conditional (IF/ELIF/ELSE) editor ─────────────────────────────────────────
+
+const COND_OPERATORS: Array<{ value: string; label: string; noValue?: boolean }> = [
+  { value: '=',            label: '= equals' },
+  { value: '!=',           label: '≠ not equals' },
+  { value: '>',            label: '> greater than' },
+  { value: '<',            label: '< less than' },
+  { value: '>=',           label: '≥ greater or equal' },
+  { value: '<=',           label: '≤ less or equal' },
+  { value: 'contains',     label: 'contains' },
+  { value: 'not_contains', label: 'not contains' },
+  { value: 'starts_with',  label: 'starts with' },
+  { value: 'ends_with',    label: 'ends with' },
+  { value: 'is_empty',     label: 'is empty',     noValue: true },
+  { value: 'is_not_empty', label: 'is not empty', noValue: true },
+]
+
+const NO_VALUE_COND_OPS = new Set(COND_OPERATORS.filter(o => o.noValue).map(o => o.value))
+
+interface ConditionalBranch {
+  field: string        // encoded "objectId::fieldName"
+  op: string
+  value: string
+  outputType: 'literal' | 'field'
+  outputValue: string  // literal text OR encoded "objectId::fieldName"
+}
+
+interface ConditionalConfig {
+  branches: ConditionalBranch[]
+  elseOutputType: 'literal' | 'field'
+  elseOutputValue: string
+}
+
+function defaultBranch(): ConditionalBranch {
+  return { field: '', op: '=', value: '', outputType: 'literal', outputValue: '' }
+}
+
+function ConditionalEditor({
+  config, onChange, upstreamSourceIds, sourceObjects, fieldsMap, sourceGroupLabels,
+}: {
+  config: Record<string, unknown>
+  onChange: (c: Record<string, unknown>) => void
+  upstreamSourceIds: string[]
+  sourceObjects: DataObject[]
+  fieldsMap: Record<string, ObjectField[]>
+  sourceGroupLabels?: Record<string, string>
+}) {
+  const cfg = config as unknown as ConditionalConfig
+  const branches: ConditionalBranch[] = cfg.branches ?? [defaultBranch()]
+  const elseOutputType: 'literal' | 'field' = cfg.elseOutputType ?? 'literal'
+  const elseOutputValue: string = cfg.elseOutputValue ?? ''
+
+  const update = (patch: Partial<ConditionalConfig>) =>
+    onChange({ ...cfg, ...patch } as unknown as Record<string, unknown>)
+
+  const updateBranch = (i: number, patch: Partial<ConditionalBranch>) => {
+    const next = branches.map((b, idx) => idx === i ? { ...b, ...patch } : b)
+    update({ branches: next })
+  }
+
+  const addBranch = () => update({ branches: [...branches, defaultBranch()] })
+  const removeBranch = (i: number) => update({ branches: branches.filter((_, idx) => idx !== i) })
+
+  const sharedPickerProps = { sourceObjects, fieldsMap, upstreamSourceIds, sourceGroupLabels }
+
+  const outputEditor = (
+    type: 'literal' | 'field',
+    value: string,
+    onTypeChange: (t: 'literal' | 'field') => void,
+    onValueChange: (v: string) => void,
+  ) => (
+    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+      <select
+        value={type}
+        onChange={e => onTypeChange(e.target.value as 'literal' | 'field')}
+        className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-violet-400 shrink-0"
+      >
+        <option value="literal">Text</option>
+        <option value="field">Field</option>
+      </select>
+      {type === 'field' ? (
+        <SourceFieldPicker
+          value={value}
+          onChange={onValueChange}
+          {...sharedPickerProps}
+        />
+      ) : (
+        <input
+          value={value}
+          onChange={e => onValueChange(e.target.value)}
+          placeholder="output value…"
+          className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-violet-400"
+        />
+      )}
+    </div>
+  )
+
+  return (
+    <div className="space-y-2 w-full">
+      {branches.map((branch, i) => (
+        <div key={i} className="space-y-1">
+          {/* Condition row */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-bold text-violet-500 w-8 shrink-0">{i === 0 ? 'IF' : 'ELIF'}</span>
+            <SourceFieldPicker
+              value={branch.field}
+              onChange={v => updateBranch(i, { field: v ?? '' })}
+              {...sharedPickerProps}
+            />
+            <select
+              value={branch.op}
+              onChange={e => updateBranch(i, { op: e.target.value, value: '' })}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-violet-400 shrink-0"
+            >
+              {COND_OPERATORS.map(op => (
+                <option key={op.value} value={op.value}>{op.label}</option>
+              ))}
+            </select>
+            {!NO_VALUE_COND_OPS.has(branch.op) && (
+              <input
+                value={branch.value}
+                onChange={e => updateBranch(i, { value: e.target.value })}
+                placeholder="value…"
+                className="w-28 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-violet-400"
+              />
+            )}
+            <button
+              onClick={() => removeBranch(i)}
+              className="text-gray-300 hover:text-red-400 text-sm shrink-0 ml-auto"
+              title="Remove branch"
+            >✕</button>
+          </div>
+          {/* Output row */}
+          <div className="flex items-center gap-1.5 pl-8">
+            <span className="text-xs text-gray-400 shrink-0">→ then</span>
+            {outputEditor(
+              branch.outputType,
+              branch.outputValue,
+              t => updateBranch(i, { outputType: t, outputValue: '' }),
+              v => updateBranch(i, { outputValue: v }),
+            )}
+          </div>
+        </div>
+      ))}
+
+      {/* ELSE row */}
+      <div className="flex items-center gap-1.5 pt-0.5">
+        <span className="text-xs font-bold text-gray-500 w-8 shrink-0">ELSE</span>
+        <span className="text-xs text-gray-400 shrink-0">→</span>
+        {outputEditor(
+          elseOutputType,
+          elseOutputValue,
+          t => update({ elseOutputType: t, elseOutputValue: '' }),
+          v => update({ elseOutputValue: v }),
+        )}
+      </div>
+
+      <button
+        onClick={addBranch}
+        className="text-xs px-2.5 py-1 rounded-lg border border-violet-200 text-violet-600 hover:bg-violet-50 transition-colors"
+      >
+        + Add branch
+      </button>
+    </div>
+  )
+}
+
+// ── Picklist mapping hint ─────────────────────────────────────────────────────
+
+/**
+ * Shown below a Direct rule when both the target field and the selected source
+ * field are of type 'picklist'. Warns if no picklist mapping covers them.
+ */
+function PicklistMappingHint({
+  targetField,
+  sourceObjectId,
+  sourceFieldName,
+  fieldsMap,
+  picklists,
+  picklistMappings,
+}: {
+  targetField: ObjectField
+  sourceObjectId: string | undefined
+  sourceFieldName: string | undefined
+  fieldsMap: Record<string, ObjectField[]>
+  picklists: Picklist[]
+  picklistMappings: PicklistMapping[]
+}) {
+  if (targetField.dataType !== 'picklist') return null
+  if (!sourceObjectId || !sourceFieldName) return null
+
+  const sourceField = fieldsMap[sourceObjectId]?.find(f => f.name === sourceFieldName)
+  if (!sourceField || sourceField.dataType !== 'picklist') return null
+
+  const srcPicklist = picklists.find(p => p.id === sourceField.picklistId)
+  const tgtPicklist = picklists.find(p => p.id === targetField.picklistId)
+
+  const mapping = picklistMappings.find(
+    m => m.sourcePicklistId === sourceField.picklistId && m.targetPicklistId === targetField.picklistId
+  )
+
+  if (mapping) {
+    return (
+      <div className="flex items-center gap-1.5 text-xs text-emerald-600 mt-1">
+        <span>✓</span>
+        <span>Picklist mapping <span className="font-medium">{mapping.name}</span> will be applied</span>
+      </div>
+    )
+  }
+
+  const srcName = srcPicklist?.name ?? sourceField.picklistId ?? 'unknown'
+  const tgtName = tgtPicklist?.name ?? targetField.picklistId ?? 'unknown'
+
+  return (
+    <div className="flex items-start gap-1.5 text-xs text-amber-600 mt-1 bg-amber-50 rounded px-2 py-1">
+      <span className="shrink-0">⚠</span>
+      <span>No picklist mapping found between <span className="font-medium">{srcName}</span> and <span className="font-medium">{tgtName}</span>. Values will be copied as-is.</span>
+    </div>
+  )
+}
+
 // ── Rule type list ────────────────────────────────────────────────────────────
 
 const RULE_TYPES = [
@@ -293,6 +522,7 @@ const RULE_TYPES = [
   { value: 'concat',       label: 'Concat' },
   { value: 'split',        label: 'Split' },
   { value: 'dateformat',   label: 'Date Format' },
+  { value: 'conditional',  label: 'Conditional (IF/ELSE)' },
 ]
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -331,9 +561,29 @@ export function MapPanel({
     [mapNodeId, nodes, edges]
   )
 
+  /** If any direct upstream of this MapNode is an Append node, map its representative
+   *  source object ID → the Append node's user-facing label for use in the field picker. */
+  const sourceGroupLabels = useMemo(() => {
+    const labels: Record<string, string> = {}
+    const directEdges = edges.filter(e => e.target === mapNodeId)
+    for (const edge of directEdges) {
+      const upNode = nodes.find(n => n.id === edge.source)
+      if (upNode?.type !== 'appendOperator') continue
+      const appendLabel = ((upNode.data as Record<string, unknown>).label as string | undefined)?.trim()
+      if (!appendLabel) continue
+      // findUpstreamSourceIds stops at appendOperator and returns the first source ID
+      const appendSources = findUpstreamSourceIds(upNode.id, nodes, edges)
+      if (appendSources[0]) labels[appendSources[0]] = appendLabel
+    }
+    return labels
+  }, [mapNodeId, nodes, edges])
+
   const existingMappings = useMemo(
-    () => fieldMappings.filter(m => m.targetObjectId === targetObjectId),
-    [fieldMappings, targetObjectId]
+    () => fieldMappings.filter(m =>
+      m.mapNodeId === mapNodeId ||
+      (!m.mapNodeId && m.targetObjectId === targetObjectId && mapNodeId === `map-${targetObjectId}`)
+    ),
+    [fieldMappings, mapNodeId, targetObjectId]
   )
 
   const [rules, setRules] = useState<Record<string, FieldRuleState>>(() => {
@@ -350,11 +600,42 @@ export function MapPanel({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Picklist data for mapping hints
+  const [picklists, setPicklists] = useState<Picklist[]>([])
+  const [picklistMappings, setPicklistMappings] = useState<PicklistMapping[]>([])
+
+  useEffect(() => {
+    if (!window.electronAPI) return
+    Promise.all([
+      window.electronAPI.listPicklists(),
+      window.electronAPI.listPlMappings(),
+    ]).then(([pls, plms]) => {
+      setPicklists(pls)
+      setPicklistMappings(plms)
+    }).catch(() => {})
+  }, [])
+
   function setFieldRule(fieldId: string, update: Partial<FieldRuleState>) {
     setRules(prev => ({ ...prev, [fieldId]: { ...prev[fieldId], ...update } }))
   }
 
   const mappedCount = Object.values(rules).filter(r => r.ruleType !== '').length
+
+  /** For a direct rule on a picklist target field, inject the picklistMappingId if one exists. */
+  function enrichConfig(field: ObjectField, rule: FieldRuleState): Record<string, unknown> {
+    if (rule.ruleType !== 'direct' || field.dataType !== 'picklist') return rule.config
+    const { sourceObjectId, sourceFieldName } = rule.config as { sourceObjectId?: string; sourceFieldName?: string }
+    if (!sourceObjectId || !sourceFieldName) return rule.config
+    const sourceField = fieldsMap[sourceObjectId]?.find(f => f.name === sourceFieldName)
+    if (!sourceField || sourceField.dataType !== 'picklist') return rule.config
+    const mapping = picklistMappings.find(
+      m => m.sourcePicklistId === sourceField.picklistId && m.targetPicklistId === field.picklistId
+    )
+    if (mapping) return { ...rule.config, picklistMappingId: mapping.id }
+    // Remove stale picklistMappingId if no mapping found
+    const { picklistMappingId: _, ...rest } = rule.config as Record<string, unknown>
+    return rest
+  }
 
   const handleSave = async () => {
     setSaving(true)
@@ -367,12 +648,15 @@ export function MapPanel({
           if (rule.ruleType === '') {
             return existing ? window.electronAPI.deleteFieldMapping(existing.id) : Promise.resolve()
           }
+          const finalConfig = enrichConfig(field, rule)
           return window.electronAPI.createFieldMapping(
             transformationId,
             targetObjectId,
             field.id,
             rule.ruleType,
-            JSON.stringify(rule.config),
+            JSON.stringify(finalConfig),
+            undefined,
+            mapNodeId,
           )
         })
       )
@@ -385,7 +669,7 @@ export function MapPanel({
     }
   }
 
-  const sharedEditorProps = { upstreamSourceIds, sourceObjects, fieldsMap }
+  const sharedEditorProps = { upstreamSourceIds, sourceObjects, fieldsMap, sourceGroupLabels }
 
   return (
     // Fixed full-viewport backdrop
@@ -409,7 +693,7 @@ export function MapPanel({
                 {upstreamSourceIds.length === 0
                   ? <span className="text-gray-400 font-normal italic">No source</span>
                   : <>
-                      {sourceObjects.find(o => o.id === upstreamSourceIds[0])?.name ?? upstreamSourceIds[0]}
+                      {sourceGroupLabels[upstreamSourceIds[0]] ?? sourceObjects.find(o => o.id === upstreamSourceIds[0])?.name ?? upstreamSourceIds[0]}
                       {upstreamSourceIds.length > 1 && (
                         <span className="text-gray-400 font-normal"> +{upstreamSourceIds.length - 1} more</span>
                       )}
@@ -470,7 +754,7 @@ export function MapPanel({
                   {/* Field name */}
                   <div className="px-5 py-3 flex items-start gap-1.5 min-w-0">
                     <div className="min-w-0">
-                      <span className={`font-semibold text-sm truncate block ${isMapped ? 'text-gray-800' : 'text-gray-500'}`} title={field.description}>
+                      <span className={`font-semibold text-sm break-words ${isMapped ? 'text-gray-800' : 'text-gray-500'}`} title={field.description}>
                         {field.name}
                       </span>
                       <span className="text-xs text-gray-300">{field.dataType}</span>
@@ -499,7 +783,17 @@ export function MapPanel({
                       <span className="text-xs text-gray-300 italic">—</span>
                     )}
                     {rule.ruleType === 'direct' && (
-                      <DirectEditor config={rule.config} onChange={c => setFieldRule(field.id, { config: c })} {...sharedEditorProps} />
+                      <>
+                        <DirectEditor config={rule.config} onChange={c => setFieldRule(field.id, { config: c })} {...sharedEditorProps} />
+                        <PicklistMappingHint
+                          targetField={field}
+                          sourceObjectId={(rule.config as Record<string, unknown>).sourceObjectId as string | undefined}
+                          sourceFieldName={(rule.config as Record<string, unknown>).sourceFieldName as string | undefined}
+                          fieldsMap={fieldsMap}
+                          picklists={picklists}
+                          picklistMappings={picklistMappings}
+                        />
+                      </>
                     )}
                     {rule.ruleType === 'constant' && (
                       <ConstantEditor config={rule.config} onChange={c => setFieldRule(field.id, { config: c })} />
@@ -521,6 +815,9 @@ export function MapPanel({
                     )}
                     {rule.ruleType === 'dateformat' && (
                       <DateFormatEditor config={rule.config} onChange={c => setFieldRule(field.id, { config: c })} {...sharedEditorProps} />
+                    )}
+                    {rule.ruleType === 'conditional' && (
+                      <ConditionalEditor config={rule.config} onChange={c => setFieldRule(field.id, { config: c })} {...sharedEditorProps} />
                     )}
                   </div>
                 </div>

@@ -157,11 +157,11 @@ export function RuleConfigPanel({ mapping, targetField, targetObject, onSave, on
       <div className="px-4 py-3 border-b flex items-start justify-between shrink-0">
         <div>
           <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">Rule Config</p>
-          <p className="text-sm font-semibold text-gray-800 mt-0.5 truncate" title={targetField.description}>
+          <p className="text-sm font-semibold text-gray-800 mt-0.5 break-words" title={targetField.description}>
             {targetField.name}
           </p>
           {targetObject && (
-            <p className="text-xs text-gray-400 truncate">{targetObject.name}</p>
+            <p className="text-xs text-gray-400 break-words">{targetObject.name}</p>
           )}
         </div>
         <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none mt-0.5">✕</button>

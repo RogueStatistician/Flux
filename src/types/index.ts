@@ -142,6 +142,7 @@ export interface FieldMapping {
   ruleType: string
   ruleConfig: string
   notes?: string
+  mapNodeId?: string
 }
 
 export interface Run {

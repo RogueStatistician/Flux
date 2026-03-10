@@ -18,6 +18,12 @@ function fmtDate(iso: string) {
 
 // ── Run detail panel ──────────────────────────────────────────────────────────
 
+interface PreviewData {
+  headers: string[]
+  rows: Record<string, string>[]
+  totalRows: number
+}
+
 function RunDetailPanel({
   run,
   onClose,
@@ -27,6 +33,10 @@ function RunDetailPanel({
 }) {
   const [issues, setIssues] = useState<RunIssue[]>([])
   const [loadingIssues, setLoadingIssues] = useState(true)
+  const [previewTargetId, setPreviewTargetId] = useState<string | null>(null)
+  const [preview, setPreview] = useState<PreviewData | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
 
   const manifest = run.outputManifest
     ? (run.outputManifest as unknown as { targets: OutputManifestTarget[] })
@@ -36,6 +46,13 @@ function RunDetailPanel({
     | { totalRowsProcessed: number; totalIssues: number; targetCount: number }
     | undefined
 
+  // Auto-select first target for preview
+  useEffect(() => {
+    if (manifest?.targets.length && !previewTargetId) {
+      setPreviewTargetId(manifest.targets[0].objectId)
+    }
+  }, [manifest])
+
   useEffect(() => {
     if (!window.electronAPI) return
     window.electronAPI.getRunIssues(run.id).then(iss => {
@@ -43,6 +60,17 @@ function RunDetailPanel({
       setLoadingIssues(false)
     })
   }, [run.id])
+
+  useEffect(() => {
+    if (!previewTargetId || !window.electronAPI) return
+    setPreviewLoading(true)
+    setPreviewError(null)
+    setPreview(null)
+    window.electronAPI.previewOutput(run.id, previewTargetId, 100)
+      .then(data => setPreview(data))
+      .catch(err => setPreviewError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setPreviewLoading(false))
+  }, [run.id, previewTargetId])
 
   const handleSaveOutput = async (target: OutputManifestTarget) => {
     const ext = target.format === 'xlsx' ? '.xlsx' : '.csv'
@@ -62,9 +90,10 @@ function RunDetailPanel({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div
-        className="bg-white rounded-xl shadow-2xl w-[680px] max-h-[80vh] flex flex-col overflow-hidden"
+        className="bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden"
+        style={{ width: 'min(95vw, 1100px)', maxHeight: '90vh' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -114,6 +143,72 @@ function RunDetailPanel({
             </div>
           )}
 
+          {/* Preview */}
+          {manifest && manifest.targets.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Preview</p>
+                {manifest.targets.length > 1 && (
+                  <div className="flex gap-1">
+                    {manifest.targets.map(t => (
+                      <button
+                        key={t.objectId}
+                        onClick={() => setPreviewTargetId(t.objectId)}
+                        className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${
+                          previewTargetId === t.objectId
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'text-gray-600 border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        {t.objectName}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {previewLoading && (
+                <div className="text-xs text-gray-400 py-4 text-center">Loading preview…</div>
+              )}
+              {previewError && (
+                <div className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">{previewError}</div>
+              )}
+              {preview && !previewLoading && (
+                <div>
+                  <div className="overflow-auto rounded-lg border border-gray-200" style={{ maxHeight: 320 }}>
+                    <table className="text-xs border-collapse" style={{ minWidth: '100%' }}>
+                      <thead className="sticky top-0 bg-gray-50 z-10">
+                        <tr>
+                          {preview.headers.map((h, i) => (
+                            <th key={i} className="text-left px-3 py-2 text-gray-500 font-semibold border-b border-gray-200 whitespace-nowrap">
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {preview.rows.map((row, i) => (
+                          <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/60'}>
+                            {preview.headers.map((h, ci) => (
+                              <td key={ci} className="px-3 py-1.5 text-gray-700 border-b border-gray-100 whitespace-nowrap max-w-[200px] overflow-hidden text-ellipsis" title={row[String(ci)]}>
+                                {row[String(ci)] || <span className="text-gray-300">—</span>}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {preview.totalRows > 100 && (
+                    <p className="text-xs text-gray-400 mt-1.5">
+                      Showing first 100 of {preview.totalRows.toLocaleString()} rows.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Issues */}
           <div>
             <p className="text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide">
@@ -138,7 +233,7 @@ function RunDetailPanel({
                     {issues.slice(0, 200).map(iss => (
                       <tr key={iss.id} className="border-t border-gray-100 hover:bg-gray-50">
                         <td className="px-3 py-1.5 text-gray-400">{iss.rowIndex ?? '—'}</td>
-                        <td className="px-3 py-1.5 text-gray-600 truncate max-w-[112px]">{iss.fieldName ?? '—'}</td>
+                        <td className="px-3 py-1.5 text-gray-600 break-words">{iss.fieldName ?? '—'}</td>
                         <td className="px-3 py-1.5">
                           <span className={iss.severity === 'error' ? 'text-red-600 font-medium' : 'text-amber-600'}>
                             {iss.severity}

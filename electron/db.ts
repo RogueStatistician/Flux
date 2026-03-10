@@ -165,6 +165,20 @@ ALTER TABLE data_objects ADD COLUMN template_data_start_row INTEGER DEFAULT NULL
 `
 
 /**
+ * Migration v4 → v5: supports multiple MapNodes per target object.
+ *
+ * map_node_id — canvas node ID of the map-operator node that owns this rule.
+ *               NULL for legacy single-MapNode transformations (backward-compatible).
+ *               When set, rules are scoped to a specific MapNode so two
+ *               independent mapping paths can target the same output object
+ *               with different source fields.
+ */
+const MIGRATION_V5 = `
+ALTER TABLE field_mappings ADD COLUMN map_node_id TEXT;
+CREATE INDEX idx_field_mappings_node ON field_mappings(map_node_id);
+`
+
+/**
  * Open (or create) a .flux SQLite file and run any pending migrations.
  * Throws if the file path is invalid or the DB is not a valid Flux project.
  */
@@ -236,5 +250,10 @@ function applyMigrations(db: Database.Database): void {
   if (currentVersion < 4) {
     db.exec(MIGRATION_V4)
     db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '4')
+  }
+
+  if (currentVersion < 5) {
+    db.exec(MIGRATION_V5)
+    db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '5')
   }
 }

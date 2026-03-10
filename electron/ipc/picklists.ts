@@ -3,7 +3,7 @@
  */
 import { ipcMain } from 'electron'
 import { getDb } from '../db.js'
-import { parseFile } from '../importer.js'
+import { parseFile, parseAllSheets } from '../importer.js'
 
 // ── Row types ──────────────────────────────────────────────────────────────────
 
@@ -175,6 +175,85 @@ export function registerPicklistHandlers(): void {
 
       const count = (db.prepare('SELECT COUNT(*) as c FROM picklist_values WHERE picklist_id = ?').get(id) as { c: number }).c
       return { valueCount: count }
+    }
+  )
+
+  /**
+   * Bulk-import picklists from a multi-sheet Excel file.
+   * Each sheet becomes one picklist (named after the sheet).
+   * Required column: "key" (case-insensitive). Optional: "label".
+   * If a picklist with the same name already exists, its values are replaced.
+   */
+  ipcMain.handle(
+    'picklists:bulkImportFromFile',
+    async (_e, filePath: string, side: 'source' | 'target') => {
+      const db = getDb()
+      const projectId = getProjectId()
+      const sheets = parseAllSheets(filePath)
+
+      const results: Array<{ name: string; created: boolean; valueCount: number }> = []
+      const errors: Array<{ name: string; error: string }> = []
+
+      const findCol = (headers: string[], names: string[]): string | undefined =>
+        headers.find(h => names.includes(h.toLowerCase()))
+
+      const insPicklist = db.prepare(`
+        INSERT INTO picklists (id, project_id, name, description, side, created_at)
+        VALUES (?, ?, ?, NULL, ?, ?)
+      `)
+      const delValues = db.prepare('DELETE FROM picklist_values WHERE picklist_id = ?')
+      const insValue = db.prepare(`
+        INSERT INTO picklist_values (id, picklist_id, key, label, position)
+        VALUES (?, ?, ?, ?, ?)
+      `)
+
+      for (const { sheetName, headers, rows } of sheets) {
+        const name = sheetName.trim()
+        if (!name) continue
+
+        const keyCol = findCol(headers, ['key'])
+        if (!keyCol) {
+          errors.push({ name, error: `No "key" column found. Headers: ${headers.join(', ') || '(empty)'}` })
+          continue
+        }
+        const labelCol = findCol(headers, ['label'])
+
+        const importSheet = db.transaction(() => {
+          // Find or create the picklist
+          let pl = db.prepare(
+            'SELECT * FROM picklists WHERE project_id = ? AND side = ? AND name = ?'
+          ).get(projectId, side, name) as PicklistRow | undefined
+
+          let created = false
+          if (!pl) {
+            const newId = crypto.randomUUID()
+            insPicklist.run(newId, projectId, name, side, new Date().toISOString())
+            pl = db.prepare('SELECT * FROM picklists WHERE id = ?').get(newId) as PicklistRow
+            created = true
+          }
+
+          // Replace values
+          delValues.run(pl.id)
+          let pos = 0
+          for (const row of rows) {
+            const key = (row[keyCol] ?? '').trim()
+            if (!key) continue
+            const label = labelCol ? (row[labelCol] ?? '').trim() || null : null
+            insValue.run(crypto.randomUUID(), pl.id, key, label, pos++)
+          }
+
+          return { created, valueCount: pos }
+        })
+
+        try {
+          const { created, valueCount } = importSheet()
+          results.push({ name, created, valueCount })
+        } catch (e) {
+          errors.push({ name, error: e instanceof Error ? e.message : String(e) })
+        }
+      }
+
+      return { results, errors }
     }
   )
 }

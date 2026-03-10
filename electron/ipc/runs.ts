@@ -3,6 +3,7 @@
  */
 import { ipcMain } from 'electron'
 import fs from 'fs'
+import * as XLSX from 'xlsx'
 import { getDb } from '../db.js'
 import { executeTransformation, cancelRun } from '../engine.js'
 
@@ -86,6 +87,48 @@ export function registerRunHandlers(): void {
       severity: r.severity,
       message: r.message,
     }))
+  })
+
+  /** Return the first `limit` rows of an output file for preview. */
+  ipcMain.handle('run:previewOutput', async (_e, runId: string, targetObjectId: string, limit = 100) => {
+    const db = getDb()
+    const row = db.prepare('SELECT output_manifest FROM runs WHERE id = ?').get(runId) as
+      | { output_manifest: string | null }
+      | undefined
+    if (!row?.output_manifest) throw new Error('No output manifest for this run.')
+
+    const manifest = JSON.parse(row.output_manifest) as {
+      targets: Array<{ objectId: string; filePath: string; format: string }>
+    }
+    const target = manifest.targets.find(t => t.objectId === targetObjectId)
+    if (!target) throw new Error('Target not found in manifest.')
+    if (!fs.existsSync(target.filePath)) throw new Error('Output file has been cleaned up. Re-run the transformation.')
+
+    let wb: XLSX.WorkBook
+    if (target.format === 'csv') {
+      const content = fs.readFileSync(target.filePath, 'utf-8')
+      wb = XLSX.read(content, { type: 'string' })
+    } else {
+      const buf = fs.readFileSync(target.filePath)
+      wb = XLSX.read(buf, { raw: false, cellDates: false })
+    }
+
+    const ws = wb.Sheets[wb.SheetNames[0]]
+    const allRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+    const previewRows = allRows.slice(0, limit)
+    const allHeaders = previewRows.length > 0 ? Object.keys(previewRows[0]) : []
+    // Map __EMPTY* keys to '' for display; use numeric index keys in row objects
+    // so duplicate empty headers don't overwrite each other's values.
+    const headers = allHeaders.map(h => h.startsWith('__EMPTY') ? '' : h)
+    const rows = previewRows.map(r => {
+      const out: Record<string, string> = {}
+      for (let i = 0; i < allHeaders.length; i++) {
+        out[String(i)] = String(r[allHeaders[i]] ?? '')
+      }
+      return out
+    })
+
+    return { headers, rows, totalRows: allRows.length }
   })
 
   /** Copy an output file to a user-chosen destination path. */

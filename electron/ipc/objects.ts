@@ -131,6 +131,10 @@ export function registerObjectHandlers(): void {
     ) => {
       const db = getDb()
       const projectId = getProjectId()
+
+      const dup = db.prepare('SELECT COUNT(*) as c FROM data_objects WHERE project_id = ? AND role = ? AND name = ?').get(projectId, role, name) as { c: number }
+      if (dup.c > 0) throw new Error(`A ${role} named "${name}" already exists.`)
+
       const id = crypto.randomUUID()
       const now = new Date().toISOString()
 
@@ -185,8 +189,14 @@ export function registerObjectHandlers(): void {
     ) => {
       const db = getDb()
       const now = new Date().toISOString()
-      if (updates.name !== undefined)
+      if (updates.name !== undefined) {
+        const cur = db.prepare('SELECT role, project_id FROM data_objects WHERE id = ?').get(id) as { role: string; project_id: string } | undefined
+        if (cur) {
+          const dup = db.prepare('SELECT COUNT(*) as c FROM data_objects WHERE project_id = ? AND role = ? AND name = ? AND id != ?').get(cur.project_id, cur.role, updates.name, id) as { c: number }
+          if (dup.c > 0) throw new Error(`A ${cur.role} named "${updates.name}" already exists.`)
+        }
         db.prepare('UPDATE data_objects SET name = ?, updated_at = ? WHERE id = ?').run(updates.name, now, id)
+      }
       if ('description' in updates)
         db.prepare('UPDATE data_objects SET description = ?, updated_at = ? WHERE id = ?').run(updates.description ?? null, now, id)
       if ('systemName' in updates)
@@ -263,31 +273,64 @@ export function registerObjectHandlers(): void {
       }>
     ) => {
       const db = getDb()
-      const del = db.prepare('DELETE FROM object_fields WHERE object_id = ?')
+
+      // Load existing fields so we can reuse their IDs (preserving field_mappings FK references)
+      const existing = db.prepare(
+        'SELECT id, name FROM object_fields WHERE object_id = ?'
+      ).all(objectId) as { id: string; name: string }[]
+      const existingById = new Map(existing.map(r => [r.name, r.id]))
+      const incomingNames = new Set(fields.map(f => f.name))
+
+      const delById = db.prepare('DELETE FROM object_fields WHERE id = ?')
       const ins = db.prepare(`
         INSERT INTO object_fields
           (id, object_id, name, description, data_type, is_required, is_nullable,
            picklist_id, date_format, max_length, position, notes)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
+      const upd = db.prepare(`
+        UPDATE object_fields
+        SET description = ?, data_type = ?, is_required = ?, is_nullable = ?,
+            picklist_id = ?, date_format = ?, max_length = ?, position = ?, notes = ?
+        WHERE id = ?
+      `)
 
       const upsertAll = db.transaction(() => {
-        del.run(objectId)
+        // Delete fields that are no longer in the incoming list
+        for (const r of existing) {
+          if (!incomingNames.has(r.name)) delById.run(r.id)
+        }
         fields.forEach((f, i) => {
-          ins.run(
-            crypto.randomUUID(),
-            objectId,
-            f.name,
-            f.description ?? null,
-            f.dataType,
-            f.isRequired ? 1 : 0,
-            f.isNullable ? 1 : 0,
-            f.picklistId || null,
-            f.dateFormat ?? null,
-            f.maxLength ?? null,
-            i,
-            f.notes ?? null
-          )
+          const existingId = existingById.get(f.name)
+          if (existingId) {
+            upd.run(
+              f.description ?? null,
+              f.dataType,
+              f.isRequired ? 1 : 0,
+              f.isNullable ? 1 : 0,
+              f.picklistId || null,
+              f.dateFormat ?? null,
+              f.maxLength ?? null,
+              i,
+              f.notes ?? null,
+              existingId
+            )
+          } else {
+            ins.run(
+              crypto.randomUUID(),
+              objectId,
+              f.name,
+              f.description ?? null,
+              f.dataType,
+              f.isRequired ? 1 : 0,
+              f.isNullable ? 1 : 0,
+              f.picklistId || null,
+              f.dateFormat ?? null,
+              f.maxLength ?? null,
+              i,
+              f.notes ?? null
+            )
+          }
         })
       })
       upsertAll()

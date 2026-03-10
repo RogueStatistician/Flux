@@ -161,6 +161,12 @@ export function registerProjectHandlers(): void {
     return loadRecents()
   })
 
+  /** Remove a single entry from the recents list (does not touch the file). */
+  ipcMain.handle('project:removeRecent', async (_event, filePath: string) => {
+    const recents = loadRecents().filter(r => r.filePath !== filePath)
+    fs.writeFileSync(recentsPath(), JSON.stringify(recents, null, 2), 'utf-8')
+  })
+
   /**
    * Close the current project, remove it from recents, and delete the .flux file.
    * The renderer is responsible for navigating back to HomeScreen after this resolves.

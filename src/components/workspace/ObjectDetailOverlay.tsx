@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { DataObject, ObjectField, Picklist } from '../../types/index.js'
 
 const TYPE_COLORS: Record<string, string> = {
@@ -20,6 +20,197 @@ interface Props {
   onObjectUpdated: (obj: DataObject) => void
 }
 
+// ── Replace Data Modal ────────────────────────────────────────────────────────
+
+function ReplaceDataModal({
+  object,
+  onClose,
+  onReplaced,
+}: {
+  object: DataObject
+  onClose: () => void
+  onReplaced: (newRowCount: number) => void
+}) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [filePath, setFilePath] = useState<string>('')
+  const [fileName, setFileName] = useState<string>('')
+  const [headerRow, setHeaderRow] = useState(object.templateHeaderRow ?? 0)
+  const [dataStartRow, setDataStartRow] = useState(object.templateDataStartRow ?? (object.templateHeaderRow ?? 0) + 1)
+  const [preview, setPreview] = useState<{ headers: string[]; rows: Record<string, string>[] } | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function loadPreview(fp: string, skipRows: number) {
+    try {
+      const res = await window.electronAPI.inferSchema(fp, { skipRows })
+      setPreview({ headers: res.headers ?? [], rows: (res.rows ?? []).slice(0, 8) })
+      setError(null)
+    } catch (e) {
+      setError(`Preview failed: ${e instanceof Error ? e.message : String(e)}`)
+      setPreview(null)
+    }
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const fp = (file as unknown as { path: string }).path
+    setFilePath(fp)
+    setFileName(file.name)
+    loadPreview(fp, headerRow)
+  }
+
+  function handleHeaderRowChange(v: number) {
+    setHeaderRow(v)
+    const newDataStart = Math.max(v + 1, dataStartRow)
+    setDataStartRow(newDataStart)
+    if (filePath) loadPreview(filePath, v)
+  }
+
+  async function handleImport() {
+    if (!filePath) return
+    setImporting(true)
+    setError(null)
+    try {
+      const opts: { skipRows: number; dataStartRow?: number } = { skipRows: headerRow }
+      if (dataStartRow !== headerRow + 1) opts.dataStartRow = dataStartRow
+      await window.electronAPI.importRows(object.id, filePath, opts)
+      // Get updated row count from a fresh getRows call (total field)
+      const { total } = await window.electronAPI.getRows(object.id, 0, 1)
+      onReplaced(total)
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Import failed.')
+      setImporting(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-6"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        style={{ width: 'min(95vw, 860px)', maxHeight: 'min(90vh, 700px)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-6 py-4 border-b bg-blue-50 shrink-0 flex items-center justify-between">
+          <div>
+            <p className="text-xs font-bold text-blue-600 uppercase tracking-widest mb-0.5">Replace source data</p>
+            <p className="text-base font-semibold text-gray-900">{object.name}</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Existing rows will be replaced. Schema and transformation rules are unchanged.
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-2xl leading-none shrink-0">✕</button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          {/* File picker */}
+          <div>
+            <p className="text-sm font-semibold text-gray-700 mb-2">Select file</p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="px-4 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Browse…
+              </button>
+              <span className="text-sm text-gray-500">{fileName || 'No file selected'}</span>
+              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFileChange} />
+            </div>
+          </div>
+
+          {/* Parse options */}
+          <div className="flex items-center gap-6 flex-wrap">
+            <label className="flex items-center gap-2 text-sm text-gray-600">
+              Header row
+              <input
+                type="number"
+                min={0}
+                value={headerRow + 1}
+                onChange={e => handleHeaderRowChange(Math.max(0, Number(e.target.value) - 1))}
+                className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+              <span className="text-xs text-gray-400">(1 = first row)</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-600">
+              Data starts at row
+              <input
+                type="number"
+                min={headerRow + 2}
+                value={dataStartRow + 1}
+                onChange={e => setDataStartRow(Math.max(headerRow + 1, Number(e.target.value) - 1))}
+                className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+              <span className="text-xs text-gray-400">(1 = first row)</span>
+            </label>
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="px-4 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+              {error}
+            </div>
+          )}
+
+          {/* Preview */}
+          {preview && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                Preview (first {preview.rows.length} data rows)
+              </p>
+              <div className="overflow-auto border border-gray-100 rounded-xl" style={{ maxHeight: 260 }}>
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      {preview.headers.map(h => (
+                        <th key={h} className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap border-r border-gray-100 last:border-0">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {preview.rows.map((row, i) => (
+                      <tr key={i}>
+                        {preview.headers.map(h => (
+                          <td key={h} className="px-3 py-1.5 text-gray-700 whitespace-nowrap border-r border-gray-50 last:border-0">
+                            {row[h] ?? <span className="text-gray-300">—</span>}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t bg-gray-50 shrink-0 flex items-center justify-between">
+          <button onClick={onClose} className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
+            Cancel
+          </button>
+          <button
+            onClick={handleImport}
+            disabled={!filePath || importing}
+            className="px-6 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 disabled:opacity-40 transition-colors"
+          >
+            {importing ? 'Importing…' : 'Replace data'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Main overlay ──────────────────────────────────────────────────────────────
+
 export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props) {
   const [tab, setTab] = useState<'schema' | 'data'>(object.role === 'source' ? 'data' : 'schema')
   const [fields, setFields] = useState<ObjectField[]>([])
@@ -28,6 +219,8 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
   const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(true)
   const [picklists, setPicklists] = useState<Picklist[]>([])
+  const [showReplaceModal, setShowReplaceModal] = useState(false)
+  const [rowCount, setRowCount] = useState(object.rowCount)
 
   // Load fields on mount
   useEffect(() => {
@@ -82,13 +275,23 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
             <div className="flex gap-4 mt-1 text-xs text-gray-400">
               {object.systemName && <span>{object.systemName}</span>}
               {object.fileName && <span>{object.fileName}</span>}
-              {object.role === 'source' && object.rowCount !== undefined && (
-                <span>{object.rowCount.toLocaleString()} rows</span>
+              {object.role === 'source' && rowCount !== undefined && (
+                <span>{rowCount.toLocaleString()} rows</span>
               )}
               <span>{fields.length} field{fields.length !== 1 ? 's' : ''}</span>
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none mt-1">✕</button>
+          <div className="flex items-center gap-2">
+            {object.role === 'source' && (
+              <button
+                onClick={() => setShowReplaceModal(true)}
+                className="text-xs px-3 py-1.5 bg-white border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 text-gray-600 hover:text-blue-700 font-medium transition-colors"
+              >
+                ↑ Replace data
+              </button>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -108,6 +311,26 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
             </button>
           ))}
         </div>
+
+        {/* Replace data modal */}
+        {showReplaceModal && (
+          <ReplaceDataModal
+            object={object}
+            onClose={() => setShowReplaceModal(false)}
+            onReplaced={newCount => {
+              setRowCount(newCount)
+              setTotal(newCount)
+              setPage(0)
+              onObjectUpdated({ ...object, rowCount: newCount })
+              // Reload the data tab
+              setTab('data')
+              window.electronAPI.getRows(object.id, 0, PAGE_SIZE).then(({ rows: r, total: t }) => {
+                setRows(r)
+                setTotal(t)
+              }).catch(() => {})
+            }}
+          />
+        )}
 
         {/* Content */}
         <div className="flex-1 overflow-auto">
@@ -408,7 +631,7 @@ function DataTab({
             {rows.map((row, i) => (
               <tr key={i} className="hover:bg-blue-50/30">
                 {headers.map(h => (
-                  <td key={h} className="px-3 py-2 text-gray-700 max-w-[200px] truncate border-r border-gray-50 last:border-0" title={row[h]}>
+                  <td key={h} className="px-3 py-2 text-gray-700 break-words border-r border-gray-50 last:border-0" title={row[h]}>
                     {row[h] || <span className="text-gray-300">—</span>}
                   </td>
                 ))}

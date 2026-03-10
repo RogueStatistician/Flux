@@ -2,6 +2,51 @@ import { useState, useEffect, useCallback } from 'react'
 import type { PicklistMapping, Picklist } from '../../../types/index.js'
 import { MappingEditorOverlay } from '../MappingEditorOverlay.js'
 
+// ── Bulk import result dialog ──────────────────────────────────────────────────
+
+interface BulkMappingResult {
+  results: Array<{ name: string; created: boolean; entryCount: number }>
+  errors: Array<{ name: string; error: string }>
+}
+
+function BulkImportResultDialog({ result, onClose }: { result: BulkMappingResult; onClose: () => void }) {
+  const total = result.results.reduce((s, r) => s + r.entryCount, 0)
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-xl shadow-2xl w-[28rem] p-6 max-h-[80vh] flex flex-col">
+        <p className="text-sm font-semibold text-gray-800 mb-1">Bulk import complete</p>
+        <p className="text-xs text-gray-500 mb-4">
+          {result.results.length} mapping{result.results.length !== 1 ? 's' : ''} imported · {total} total entries
+        </p>
+        <div className="flex-1 overflow-auto space-y-1 text-xs">
+          {result.results.map(r => (
+            <div key={r.name} className="flex items-center gap-2 px-2 py-1 rounded bg-gray-50">
+              <span className="text-emerald-500 shrink-0">✓</span>
+              <span className="font-medium text-gray-700 flex-1 truncate">{r.name}</span>
+              <span className="text-gray-400 shrink-0">{r.created ? 'created' : 'updated'} · {r.entryCount} entries</span>
+            </div>
+          ))}
+          {result.errors.map(e => (
+            <div key={e.name} className="px-2 py-1 rounded bg-red-50 border border-red-100">
+              <p className="font-medium text-red-700">{e.name}</p>
+              <p className="text-red-500 mt-0.5">{e.error}</p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Mapping Card ───────────────────────────────────────────────────────────────
 
 function MappingCard({
@@ -34,7 +79,7 @@ function MappingCard({
       className="group bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:border-indigo-300 hover:shadow-sm transition-all"
     >
       <div className="flex items-start justify-between gap-2">
-        <p className="text-sm font-semibold text-gray-800 truncate flex-1">{mapping.name}</p>
+        <p className="text-sm font-semibold text-gray-800 break-words flex-1">{mapping.name}</p>
         <button
           onClick={handleDelete}
           onBlur={() => setConfirmDelete(false)}
@@ -50,11 +95,11 @@ function MappingCard({
       </div>
 
       <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
-        <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-medium truncate max-w-[40%]">
+        <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-medium break-words">
           {sourceName || '—'}
         </span>
         <span className="text-gray-300">→</span>
-        <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded font-medium truncate max-w-[40%]">
+        <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded font-medium break-words">
           {targetName || '—'}
         </span>
       </div>
@@ -77,6 +122,8 @@ export function PLMappingsView() {
   const [showForm, setShowForm] = useState(false)
   const [newName, setNewName] = useState('')
   const [creating, setCreating] = useState(false)
+  const [bulkResult, setBulkResult] = useState<BulkMappingResult | null>(null)
+  const [bulkImporting, setBulkImporting] = useState(false)
 
   const load = useCallback(async () => {
     const [all, pls] = await Promise.all([
@@ -123,6 +170,23 @@ export function PLMappingsView() {
     setSelected(m)
   }
 
+  const handleBulkImport = async () => {
+    const res = await window.electronAPI.openFile({
+      title: 'Select bulk mapping file',
+      filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
+      properties: ['openFile'],
+    })
+    if (res.canceled || !res.filePaths[0]) return
+    setBulkImporting(true)
+    try {
+      const result = await window.electronAPI.bulkImportPlMappingsFromFile(res.filePaths[0])
+      setBulkResult(result)
+      load()
+    } finally {
+      setBulkImporting(false)
+    }
+  }
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Top bar */}
@@ -133,12 +197,22 @@ export function PLMappingsView() {
             Map source values to their target equivalents
           </p>
         </div>
-        <button
-          onClick={() => setShowForm(v => !v)}
-          className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-        >
-          + New mapping
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleBulkImport}
+            disabled={bulkImporting}
+            className="text-sm text-gray-500 hover:text-gray-700 disabled:opacity-40"
+            title="Import multiple mappings from an Excel file (one sheet per mapping, columns: source_key, target_key)"
+          >
+            {bulkImporting ? '…' : '↑ Bulk import'}
+          </button>
+          <button
+            onClick={() => setShowForm(v => !v)}
+            className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+          >
+            + New mapping
+          </button>
+        </div>
       </div>
 
       {/* New mapping form */}
@@ -203,6 +277,14 @@ export function PLMappingsView() {
           picklists={picklists}
           onClose={() => setSelected(null)}
           onUpdated={handleUpdated}
+        />
+      )}
+
+      {/* Bulk import result */}
+      {bulkResult && (
+        <BulkImportResultDialog
+          result={bulkResult}
+          onClose={() => setBulkResult(null)}
         />
       )}
     </div>

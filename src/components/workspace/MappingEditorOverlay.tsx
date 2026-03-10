@@ -1,6 +1,63 @@
 import { useState, useEffect } from 'react'
 import type { PicklistMapping, Picklist, PicklistValue, PicklistMappingEntry } from '../../types/index.js'
 
+// ── Column picker dialog ───────────────────────────────────────────────────────
+
+function ColumnPickerDialog({
+  headers,
+  label1,
+  label2,
+  onConfirm,
+  onCancel,
+}: {
+  headers: string[]
+  label1: string
+  label2: string
+  onConfirm: (col1: string, col2: string) => void
+  onCancel: () => void
+}) {
+  const [col1, setCol1] = useState(headers[0] ?? '')
+  const [col2, setCol2] = useState(headers[1] ?? headers[0] ?? '')
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
+      <div className="relative bg-white rounded-xl shadow-2xl w-96 p-6">
+        <p className="text-sm font-semibold text-gray-800 mb-4">Choose columns</p>
+
+        <label className="block text-xs font-semibold text-gray-500 mb-1">{label1} *</label>
+        <select
+          value={col1}
+          onChange={e => setCol1(e.target.value)}
+          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+        >
+          {headers.map(h => <option key={h} value={h}>{h}</option>)}
+        </select>
+
+        <label className="block text-xs font-semibold text-gray-500 mb-1">{label2} *</label>
+        <select
+          value={col2}
+          onChange={e => setCol2(e.target.value)}
+          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+        >
+          {headers.map(h => <option key={h} value={h}>{h}</option>)}
+        </select>
+
+        <div className="flex gap-3 justify-end">
+          <button onClick={onCancel} className="text-sm text-gray-500 hover:text-gray-700">Cancel</button>
+          <button
+            onClick={() => onConfirm(col1, col2)}
+            disabled={!col1 || !col2}
+            className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-40"
+          >
+            Import
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 interface Props {
   mapping: PicklistMapping
   picklists: Picklist[]
@@ -21,6 +78,10 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isDirty, setIsDirty] = useState(false)
+
+  // Import state
+  const [importHeaders, setImportHeaders] = useState<string[] | null>(null)
+  const [importFilePath, setImportFilePath] = useState<string | null>(null)
 
   const sourcePLs = picklists.filter(p => p.side === 'source')
   const targetPLs = picklists.filter(p => p.side === 'target')
@@ -66,6 +127,65 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
     })
     setEntries(newEntries)
     setIsDirty(true)
+  }
+
+  // Import from file
+  const handleImportFile = async () => {
+    const result = await window.electronAPI.openFile({
+      title: 'Select mapping file',
+      filters: [{ name: 'Excel / CSV', extensions: ['xlsx', 'xls', 'csv'] }],
+      properties: ['openFile'],
+    })
+    if (result.canceled || !result.filePaths[0]) return
+    const { headers } = await window.electronAPI.inferSchema(result.filePaths[0])
+    setImportFilePath(result.filePaths[0])
+    setImportHeaders(headers)
+  }
+
+  const handleImportConfirm = async (sourceKeyCol: string, targetKeyCol: string) => {
+    if (!importFilePath) return
+    setImportHeaders(null)
+    setLoading(true)
+    setError(null)
+    try {
+      await window.electronAPI.importPlMappingEntriesFromFile(mapping.id, importFilePath, sourceKeyCol, targetKeyCol)
+      // Reload entries
+      const { entries: e } = await window.electronAPI.getPlMapping(mapping.id)
+      const map: Record<string, string> = {}
+      e.forEach((en: PicklistMappingEntry) => { map[en.sourceKey] = en.targetKey })
+      setEntries(map)
+      setIsDirty(false)
+      onUpdated(mapping, e.length)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to import.')
+    } finally {
+      setLoading(false)
+      setImportFilePath(null)
+    }
+  }
+
+  // Download template
+  const handleDownloadTemplate = async () => {
+    const result = await window.electronAPI.saveFile({
+      title: 'Save mapping template',
+      defaultPath: `${mapping.name.replace(/\s+/g, '_')}_template.csv`,
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    })
+    if (result.canceled || !result.filePath) return
+    const header = 'source_key,target_key'
+    const exampleRows = sourceValues.length > 0
+      ? sourceValues.slice(0, 3).map(sv => `${sv.key},`).join('\n')
+      : 'VALUE_A,VALUE_B\nVALUE_C,VALUE_D'
+    const csv = `${header}\n${exampleRows}`
+    // Write via a data URL workaround — use the saveFile path directly with a small fetch-like approach
+    // We'll use IPC to write the file since we're in the renderer
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = result.filePath.split(/[\\/]/).pop() ?? 'template.csv'
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   const handleSave = async () => {
@@ -144,21 +264,33 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
         </div>
 
         {/* Toolbar */}
-        {sourceValues.length > 0 && targetValues.length > 0 && (
-          <div className="px-6 py-2 border-b flex items-center gap-4 shrink-0 bg-white">
+        <div className="px-6 py-2 border-b flex items-center gap-4 shrink-0 bg-white">
+          {sourceValues.length > 0 && targetValues.length > 0 && (
             <button
               onClick={autoFill}
               className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
             >
               ⚡ Auto-fill exact matches
             </button>
-            {unmappedKeys.length > 0 && (
-              <span className="text-xs text-amber-600 font-medium">
-                {unmappedKeys.length} unmapped
-              </span>
-            )}
-          </div>
-        )}
+          )}
+          <button
+            onClick={handleImportFile}
+            className="text-xs text-gray-500 hover:text-gray-700"
+          >
+            ↑ Import from file
+          </button>
+          <button
+            onClick={handleDownloadTemplate}
+            className="text-xs text-gray-500 hover:text-gray-700"
+          >
+            ↓ Download template
+          </button>
+          {unmappedKeys.length > 0 && (
+            <span className="text-xs text-amber-600 font-medium ml-auto">
+              {unmappedKeys.length} unmapped
+            </span>
+          )}
+        </div>
 
         {/* Content */}
         <div className="flex-1 overflow-auto">
@@ -194,8 +326,8 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
                       className={['grid grid-cols-2 gap-4 px-6 py-2 items-center', !isMapped ? 'bg-amber-50/40' : ''].join(' ')}
                     >
                       <div className="min-w-0">
-                        <p className="text-xs font-mono text-gray-700 truncate">{sv.key}</p>
-                        {sv.label && <p className="text-xs text-gray-400 truncate">{sv.label}</p>}
+                        <p className="text-xs font-mono text-gray-700 break-words">{sv.key}</p>
+                        {sv.label && <p className="text-xs text-gray-400 break-words">{sv.label}</p>}
                       </div>
                       <select
                         value={entries[sv.key] ?? ''}
@@ -234,6 +366,17 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
           </button>
         </div>
       </div>
+
+      {/* Column picker dialog for file import */}
+      {importHeaders && (
+        <ColumnPickerDialog
+          headers={importHeaders}
+          label1="Source key column"
+          label2="Target key column"
+          onConfirm={handleImportConfirm}
+          onCancel={() => { setImportHeaders(null); setImportFilePath(null) }}
+        />
+      )}
     </div>
   )
 }
