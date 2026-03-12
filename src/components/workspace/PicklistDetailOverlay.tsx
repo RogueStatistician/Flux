@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { platform } from '@/platform/index'
 import type { Picklist, PicklistValue } from '../../types/index.js'
 
 interface Props {
@@ -89,7 +90,7 @@ export function PicklistDetailOverlay({ picklist, onClose, onUpdated }: Props) {
   const [importFilePath, setImportFilePath] = useState<string | null>(null)
 
   useEffect(() => {
-    window.electronAPI.getPicklist(picklist.id).then(({ values }) => {
+    platform.getPicklist(picklist.id).then(({ values }) => {
       setRows(values.map(valueToEditable))
       setLoading(false)
     }).catch(() => setLoading(false))
@@ -121,7 +122,7 @@ export function PicklistDetailOverlay({ picklist, onClose, onUpdated }: Props) {
     setSaving(true)
     setError(null)
     try {
-      await window.electronAPI.setPicklistValues(picklist.id, values)
+      await platform.setPicklistValues(picklist.id, values)
       setIsDirty(false)
       onUpdated(picklist, values.length)
     } catch (e) {
@@ -134,14 +135,14 @@ export function PicklistDetailOverlay({ picklist, onClose, onUpdated }: Props) {
   // ── File import ───────────────────────────────────────────────────────────
 
   const handleImportFile = async () => {
-    const result = await window.electronAPI.openFile({
+    const result = await platform.openFile({
       title: 'Select picklist file',
       filters: [{ name: 'Excel / CSV', extensions: ['xlsx', 'xls', 'csv'] }],
       properties: ['openFile'],
     })
     if (result.canceled || !result.filePaths[0]) return
     // We need the headers — use inferSchema to get them
-    const { headers } = await window.electronAPI.inferSchema(result.filePaths[0])
+    const { headers } = await platform.inferSchema(result.filePaths[0])
     setImportFilePath(result.filePaths[0])
     setImportHeaders(headers)
   }
@@ -149,7 +150,7 @@ export function PicklistDetailOverlay({ picklist, onClose, onUpdated }: Props) {
   // ── Template download ─────────────────────────────────────────────────────
 
   const handleDownloadTemplate = async () => {
-    const result = await window.electronAPI.saveFile({
+    const result = await platform.saveFile({
       title: 'Save picklist template',
       defaultPath: `${picklist.name.replace(/\s+/g, '_')}_template.csv`,
       filters: [{ name: 'CSV', extensions: ['csv'] }],
@@ -170,11 +171,11 @@ export function PicklistDetailOverlay({ picklist, onClose, onUpdated }: Props) {
     setImportHeaders(null)
     setLoading(true)
     try {
-      const { valueCount } = await window.electronAPI.importPicklistFromFile(
+      const { valueCount } = await platform.importPicklistFromFile(
         picklist.id, importFilePath, keyCol, labelCol
       )
       // Reload rows
-      const { values } = await window.electronAPI.getPicklist(picklist.id)
+      const { values } = await platform.getPicklist(picklist.id)
       setRows(values.map(valueToEditable))
       setIsDirty(false)
       onUpdated(picklist, valueCount)

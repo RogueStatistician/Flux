@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { platform } from '@/platform/index'
 import type { PicklistMapping, Picklist, PicklistValue, PicklistMappingEntry } from '../../types/index.js'
 
 // ── Column picker dialog ───────────────────────────────────────────────────────
@@ -92,8 +93,8 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
     async function loadValues() {
       setLoading(true)
       const [sv, tv] = await Promise.all([
-        sourcePicklistId ? window.electronAPI.getPicklist(sourcePicklistId) : Promise.resolve({ picklist: null, values: [] }),
-        targetPicklistId ? window.electronAPI.getPicklist(targetPicklistId) : Promise.resolve({ picklist: null, values: [] }),
+        sourcePicklistId ? platform.getPicklist(sourcePicklistId) : Promise.resolve({ picklist: null, values: [] }),
+        targetPicklistId ? platform.getPicklist(targetPicklistId) : Promise.resolve({ picklist: null, values: [] }),
       ])
       if (cancelled) return
       setSourceValues(sv.values)
@@ -106,7 +107,7 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
 
   // Load existing entries on mount
   useEffect(() => {
-    window.electronAPI.getPlMapping(mapping.id).then(({ entries: e }) => {
+    platform.getPlMapping(mapping.id).then(({ entries: e }) => {
       const map: Record<string, string> = {}
       e.forEach((en: PicklistMappingEntry) => { map[en.sourceKey] = en.targetKey })
       setEntries(map)
@@ -131,13 +132,13 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
 
   // Import from file
   const handleImportFile = async () => {
-    const result = await window.electronAPI.openFile({
+    const result = await platform.openFile({
       title: 'Select mapping file',
       filters: [{ name: 'Excel / CSV', extensions: ['xlsx', 'xls', 'csv'] }],
       properties: ['openFile'],
     })
     if (result.canceled || !result.filePaths[0]) return
-    const { headers } = await window.electronAPI.inferSchema(result.filePaths[0])
+    const { headers } = await platform.inferSchema(result.filePaths[0])
     setImportFilePath(result.filePaths[0])
     setImportHeaders(headers)
   }
@@ -148,9 +149,9 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
     setLoading(true)
     setError(null)
     try {
-      await window.electronAPI.importPlMappingEntriesFromFile(mapping.id, importFilePath, sourceKeyCol, targetKeyCol)
+      await platform.importPlMappingEntriesFromFile(mapping.id, importFilePath, sourceKeyCol, targetKeyCol)
       // Reload entries
-      const { entries: e } = await window.electronAPI.getPlMapping(mapping.id)
+      const { entries: e } = await platform.getPlMapping(mapping.id)
       const map: Record<string, string> = {}
       e.forEach((en: PicklistMappingEntry) => { map[en.sourceKey] = en.targetKey })
       setEntries(map)
@@ -166,7 +167,7 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
 
   // Download template
   const handleDownloadTemplate = async () => {
-    const result = await window.electronAPI.saveFile({
+    const result = await platform.saveFile({
       title: 'Save mapping template',
       defaultPath: `${mapping.name.replace(/\s+/g, '_')}_template.csv`,
       filters: [{ name: 'CSV', extensions: ['csv'] }],
@@ -197,7 +198,7 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
         sourcePicklistId !== (mapping.sourcePicklistId ?? '') ||
         targetPicklistId !== (mapping.targetPicklistId ?? '')
       const updated = needsUpdate
-        ? await window.electronAPI.updatePlMapping(mapping.id, {
+        ? await platform.updatePlMapping(mapping.id, {
             sourcePicklistId: sourcePicklistId || null,
             targetPicklistId: targetPicklistId || null,
           })
@@ -207,7 +208,7 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
         .filter(([, v]) => v)
         .map(([sourceKey, targetKey]) => ({ sourceKey, targetKey }))
 
-      await window.electronAPI.setPlMappingEntries(mapping.id, entryList)
+      await platform.setPlMappingEntries(mapping.id, entryList)
       setIsDirty(false)
       onUpdated(updated, entryList.length)
     } catch (e) {

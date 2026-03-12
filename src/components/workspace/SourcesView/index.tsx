@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { platform } from '@/platform/index'
 import type { DataObject } from '../../../types/index.js'
 import { ObjectCard } from '../ObjectCard.js'
 import { ImportWizard } from '../ImportWizard.js'
@@ -12,13 +13,13 @@ export function SourcesView() {
   const [selectedObject, setSelectedObject] = useState<DataObject | null>(null)
 
   const load = useCallback(() => {
-    window.electronAPI.listObjects('source').then(setObjects).finally(() => setLoading(false))
+    platform.listObjects('source').then(setObjects).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => { load() }, [load])
 
   const handleUpload = async () => {
-    const result = await window.electronAPI.openFile({
+    const result = await platform.openFile({
       title: 'Select source file',
       filters: [
         { name: 'Excel / CSV', extensions: ['xlsx', 'xls', 'csv'] },
@@ -37,7 +38,7 @@ export function SourcesView() {
   }
 
   const handleDelete = async (id: string) => {
-    await window.electronAPI.deleteObject(id)
+    await platform.deleteObject(id)
     setObjects(prev => prev.filter(o => o.id !== id))
     if (selectedObject?.id === id) setSelectedObject(null)
   }

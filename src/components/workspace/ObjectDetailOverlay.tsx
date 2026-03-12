@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { platform } from '@/platform/index'
 import type { DataObject, ObjectField, Picklist } from '../../types/index.js'
 
 const TYPE_COLORS: Record<string, string> = {
@@ -42,7 +43,7 @@ function ReplaceDataModal({
 
   async function loadPreview(fp: string, skipRows: number) {
     try {
-      const res = await window.electronAPI.inferSchema(fp, { skipRows })
+      const res = await platform.inferSchema(fp, { skipRows })
       setPreview({ headers: res.headers ?? [], rows: (res.rows ?? []).slice(0, 8) })
       setError(null)
     } catch (e) {
@@ -74,9 +75,9 @@ function ReplaceDataModal({
     try {
       const opts: { skipRows: number; dataStartRow?: number } = { skipRows: headerRow }
       if (dataStartRow !== headerRow + 1) opts.dataStartRow = dataStartRow
-      await window.electronAPI.importRows(object.id, filePath, opts)
+      await platform.importRows(object.id, filePath, opts)
       // Get updated row count from a fresh getRows call (total field)
-      const { total } = await window.electronAPI.getRows(object.id, 0, 1)
+      const { total } = await platform.getRows(object.id, 0, 1)
       onReplaced(total)
       onClose()
     } catch (e) {
@@ -224,7 +225,7 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
 
   // Load fields on mount
   useEffect(() => {
-    window.electronAPI.getObject(object.id).then(({ fields: f }) => {
+    platform.getObject(object.id).then(({ fields: f }) => {
       setFields(f)
       setLoading(false)
     }).catch(() => setLoading(false))
@@ -232,7 +233,7 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
 
   // Load picklists for the matching side
   useEffect(() => {
-    window.electronAPI.listPicklists(object.role === 'source' ? 'source' : 'target')
+    platform.listPicklists(object.role === 'source' ? 'source' : 'target')
       .then(setPicklists)
       .catch(() => {})
   }, [object.role])
@@ -241,7 +242,7 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
   useEffect(() => {
     if (tab !== 'data' || object.role !== 'source') return
     setLoading(true)
-    window.electronAPI.getRows(object.id, page * PAGE_SIZE, PAGE_SIZE).then(({ rows: r, total: t }) => {
+    platform.getRows(object.id, page * PAGE_SIZE, PAGE_SIZE).then(({ rows: r, total: t }) => {
       setRows(r)
       setTotal(t)
     }).finally(() => setLoading(false))
@@ -324,7 +325,7 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
               onObjectUpdated({ ...object, rowCount: newCount })
               // Reload the data tab
               setTab('data')
-              window.electronAPI.getRows(object.id, 0, PAGE_SIZE).then(({ rows: r, total: t }) => {
+              platform.getRows(object.id, 0, PAGE_SIZE).then(({ rows: r, total: t }) => {
                 setRows(r)
                 setTotal(t)
               }).catch(() => {})
@@ -412,7 +413,7 @@ function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
     setSaving(true)
     setSaveError(null)
     try {
-      const updated = await window.electronAPI.upsertFields(
+      const updated = await platform.upsertFields(
         objectId,
         editedFields.map(({ id: _id, ...f }) => f)
       )

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { platform } from '@/platform/index'
 import type { Transformation } from '../../../types/index.js'
 import { TransformationEditor } from '../TransformationEditor/index.js'
 
@@ -169,11 +170,11 @@ export function TransformationsView() {
   const [createError, setCreateError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    const all = await window.electronAPI.listTransformations()
+    const all = await platform.listTransformations()
     setTransformations(all)
     const counts: Record<string, number> = {}
     await Promise.all(all.map(async t => {
-      const mappings = await window.electronAPI.getFieldMappings(t.id)
+      const mappings = await platform.getFieldMappings(t.id)
       counts[t.id] = mappings.length
     }))
     setMappingCounts(counts)
@@ -187,7 +188,7 @@ export function TransformationsView() {
     setCreating(true)
     setCreateError(null)
     try {
-      const t = await window.electronAPI.createTransformation(newName.trim(), newDesc.trim() || undefined)
+      const t = await platform.createTransformation(newName.trim(), newDesc.trim() || undefined)
       setTransformations(prev => [...prev, t])
       setMappingCounts(prev => ({ ...prev, [t.id]: 0 }))
       setNewName('')
@@ -203,13 +204,13 @@ export function TransformationsView() {
   }
 
   const handleDelete = async (id: string) => {
-    await window.electronAPI.deleteTransformation(id)
+    await platform.deleteTransformation(id)
     setTransformations(prev => prev.filter(t => t.id !== id))
   }
 
   const handleDuplicate = async (id: string) => {
-    const copy = await window.electronAPI.duplicateTransformation(id)
-    const mappings = await window.electronAPI.getFieldMappings(copy.id)
+    const copy = await platform.duplicateTransformation(id)
+    const mappings = await platform.getFieldMappings(copy.id)
     setTransformations(prev => [...prev, copy])
     setMappingCounts(prev => ({ ...prev, [copy.id]: mappings.length }))
   }
@@ -224,7 +225,7 @@ export function TransformationsView() {
     if (!renamingId || !renameValue.trim()) { setRenamingId(null); return }
     setRenameError(null)
     try {
-      const updated = await window.electronAPI.updateTransformation(renamingId, { name: renameValue.trim() })
+      const updated = await platform.updateTransformation(renamingId, { name: renameValue.trim() })
       setTransformations(prev => prev.map(t => t.id === updated.id ? updated : t))
       setRenamingId(null)
     } catch (e) {

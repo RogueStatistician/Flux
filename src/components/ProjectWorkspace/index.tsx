@@ -1,4 +1,5 @@
 /**
+import { platform } from '@/platform/index'
  * ProjectWorkspace — the main application shell once a project is open.
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
@@ -58,7 +59,7 @@ function ProjectNameEditor() {
     const trimmed = draft.trim()
     if (!trimmed || trimmed === project?.name) { setEditing(false); return }
     try {
-      const updated = await window.electronAPI.updateProject({ name: trimmed })
+      const updated = await platform.updateProject({ name: trimmed })
       updateProjectMeta({ name: updated.name })
     } finally {
       setEditing(false)
@@ -105,7 +106,7 @@ function DeleteProjectPanel({ onCancel }: { onCancel: () => void }) {
     setBusy(true)
     setError(null)
     try {
-      await window.electronAPI.deleteProject()
+      await platform.deleteProject()
       closeProject()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to delete project.')
@@ -151,7 +152,7 @@ export function ProjectWorkspace() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   const handleClose = useCallback(async () => {
-    await window.electronAPI.closeProject()
+    await platform.closeProject()
     closeProject()
   }, [closeProject])
 

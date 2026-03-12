@@ -6,21 +6,31 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:web": "concurrently \"npx tsx --watch web-server/server.ts\" \"vite --config vite.web.config.ts\"",
+    "start:web": "npx tsx web-server/server.ts",
     "build": "tsc && vite build && electron-builder",
     "build:renderer": "vite build",
+    "build:web": "vite build --config vite.web.config.ts",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build:preload": "esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs --sourcemap",
     "electron:dev": "npm run build:preload && concurrently \"vite\" \"esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs --sourcemap --watch\"",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
     "rebuild-native": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.1.0",
     "@xyflow/react": "^12.3.6",
     "better-sqlite3": "^11.5.0",
+    "cors": "^2.8.6",
     "dayjs": "^1.11.10",
+    "express": "^5.2.1",
+    "multer": "^2.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "xlsx": "^0.18.5",
@@ -44,6 +54,7 @@
     "vite": "^5.4.2",
     "vite-plugin-electron": "^0.28.8",
     "vite-plugin-electron-renderer": "^0.14.6",
+    "tsx": "^4.19.2",
     "wait-on": "^8.0.0"
   },
   "build": {
@@ -56,7 +67,14 @@
       "target": "portable"
     },
     "mac": {
-      "target": [{ "target": "zip", "arch": ["universal"] }]
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
+      ]
     },
     "linux": {
       "target": "AppImage"
