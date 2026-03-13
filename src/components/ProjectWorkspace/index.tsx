@@ -1,7 +1,7 @@
 /**
-import { platform } from '@/platform/index'
  * ProjectWorkspace — the main application shell once a project is open.
  */
+import { platform } from '@/platform/index'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useAppStore } from '../../store/index.js'
 import type { WorkspaceSection } from '../../types/index.js'

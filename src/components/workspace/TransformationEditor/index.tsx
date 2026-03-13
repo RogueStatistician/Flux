@@ -1,5 +1,4 @@
 /**
-import { platform } from '@/platform/index'
  * TransformationEditor — pipeline-style React Flow canvas.
  *
  * Layout:
@@ -15,6 +14,7 @@ import { platform } from '@/platform/index'
  *   - Click MapNode → opens MapPanel for per-field rule config
  *   - Delete key removes selected nodes/edges
  */
+import { platform } from '@/platform/index'
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   ReactFlow,

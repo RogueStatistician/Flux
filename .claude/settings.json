@@ -6,7 +6,17 @@
       "Bash(grep -rn \"from ''../db''\" /home/simone/code/Flux/electron/ipc/)",
       "Bash(grep -rn \"from ''../importer''\" /home/simone/code/Flux/electron/ipc/)",
       "Bash(npx tsc:*)",
-      "Bash(timeout 10 npx tsx web-server/server.ts)"
+      "Bash(timeout 10 npx tsx web-server/server.ts)",
+      "Bash(npm audit:*)",
+      "Bash(find /home/simone/code/Flux/node_modules/better-sqlite3 -name *.node)",
+      "Bash(node -e \"require\\(''/home/simone/code/Flux/node_modules/better-sqlite3''\\)\")",
+      "Bash(npm install:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(npm show:*)",
+      "Bash(ls /home/simone/code/Flux/node_modules/better-sqlite3/build/Release/*.node)",
+      "Bash(node -e \":*)",
+      "Bash(kill 2661)",
+      "Bash(head -20 grep -rn platform /home/simone/code/Flux/src/components/workspace/MappingEditorOverlay* --include=*.tsx)"
     ]
   }
 }

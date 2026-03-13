@@ -141,8 +141,8 @@ export function setPlMappingEntries(id: string, entries: Array<{ sourceKey: stri
  * sourceKeyCol and targetKeyCol are the column header names in the file.
  * Replaces all existing entries for the mapping.
  */
-export function importPlMappingEntriesFromFile(id: string, filePath: string, sourceKeyCol: string, targetKeyCol: string) {
-  const { rows } = parseFile(filePath)
+export async function importPlMappingEntriesFromFile(id: string, filePath: string, sourceKeyCol: string, targetKeyCol: string) {
+  const { rows } = await parseFile(filePath)
   const db = getDb()
   const del = db.prepare('DELETE FROM picklist_mapping_entries WHERE mapping_id = ?')
   const ins = db.prepare(`
@@ -171,10 +171,10 @@ export function importPlMappingEntriesFromFile(id: string, filePath: string, sou
  * Required columns: "source_key" and "target_key" (case-insensitive).
  * If a mapping with the same name already exists, its entries are replaced.
  */
-export function bulkImportPlMappingsFromFile(filePath: string) {
+export async function bulkImportPlMappingsFromFile(filePath: string) {
   const db = getDb()
   const projectId = getProjectId()
-  const sheets = parseAllSheets(filePath)
+  const sheets = await parseAllSheets(filePath)
 
   const results: Array<{ name: string; created: boolean; entryCount: number }> = []
   const errors: Array<{ name: string; error: string }> = []

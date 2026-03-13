@@ -1,5 +1,4 @@
 /**
-import { platform } from '@/platform/index'
  * ImportWizard — 3-step overlay for importing a data object.
  *
  * Sources:  file → infer schema → edit schema → metadata → create + import rows
@@ -16,6 +15,7 @@ import { platform } from '@/platform/index'
  * CSV import: additionally allows a custom column separator.
  * Picklist fields: user can reference which picklist the field maps to.
  */
+import { platform } from '@/platform/index'
 import { useState, useEffect, useCallback } from 'react'
 import type { DataObject, InferredField, ObjectRole, OutputFormat, Picklist } from '../../types/index.js'
 

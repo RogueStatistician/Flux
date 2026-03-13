@@ -137,8 +137,8 @@ export function setPicklistValues(id: string, values: Array<{ key: string; label
  * Import picklist values from an Excel/CSV file.
  * keyCol and labelCol are header names (strings) from the file.
  */
-export function importPicklistFromFile(id: string, filePath: string, keyCol: string, labelCol?: string) {
-  const { rows } = parseFile(filePath)
+export async function importPicklistFromFile(id: string, filePath: string, keyCol: string, labelCol?: string) {
+  const { rows } = await parseFile(filePath)
 
   const db = getDb()
   const del = db.prepare('DELETE FROM picklist_values WHERE picklist_id = ?')
@@ -169,10 +169,10 @@ export function importPicklistFromFile(id: string, filePath: string, keyCol: str
  * Required column: "key" (case-insensitive). Optional: "label".
  * If a picklist with the same name already exists, its values are replaced.
  */
-export function bulkImportPicklistsFromFile(filePath: string, side: 'source' | 'target') {
+export async function bulkImportPicklistsFromFile(filePath: string, side: 'source' | 'target') {
   const db = getDb()
   const projectId = getProjectId()
-  const sheets = parseAllSheets(filePath)
+  const sheets = await parseAllSheets(filePath)
 
   const results: Array<{ name: string; created: boolean; valueCount: number }> = []
   const errors: Array<{ name: string; error: string }> = []

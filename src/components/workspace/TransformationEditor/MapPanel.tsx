@@ -1,8 +1,8 @@
 /**
-import { platform } from '@/platform/index'
  * MapPanel — modal dialog for configuring per-field mapping rules.
  * Opens when clicking a MapOperatorNode.
  */
+import { platform } from '@/platform/index'
 import { useState, useMemo, useEffect } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import type { DataObject, FieldMapping, ObjectField, Picklist, PicklistMapping } from '../../../types/index.js'

@@ -9,7 +9,7 @@
  */
 import path from 'path'
 import fs from 'fs'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 import { getDb } from './db.js'
 
 // ── Platform configuration ────────────────────────────────────────────────────
@@ -1050,49 +1050,44 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       // ── Template-based output: preserve the original workbook structure ──────
       // Load the original template, clear the data area, then write transformed
       // rows so preamble rows and column offsets are retained exactly.
+      // ExcelJS uses 1-based row/column indices throughout.
       const templateBuf = fs.readFileSync(templateFilePath!)
-      const wb = XLSX.read(templateBuf, { raw: false, cellDates: false })
-      const wsName = wb.SheetNames[0]
-      const ws = wb.Sheets[wsName]
+      const wb = new ExcelJS.Workbook()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await wb.xlsx.load(templateBuf as any)
+      const ws = wb.getWorksheet(1)!
 
-      // Decode the current sheet extent (fall back to a single cell if empty).
-      const refStr = ws['!ref'] ?? 'A1'
-      const sheetRange = XLSX.utils.decode_range(refStr)
-
-      // Clear all cells in the data area (rows from firstDataRow onwards,
-      // columns at or after skipColumns) so stale template data is removed.
-      for (let r = firstDataRow; r <= sheetRange.e.r; r++) {
-        for (let c = skipColumns; c <= sheetRange.e.c; c++) {
-          delete ws[XLSX.utils.encode_cell({ r, c })]
+      // Clear the data area (firstDataRow onwards, skipColumns onwards).
+      const lastRow = ws.rowCount
+      const lastCol = ws.columnCount
+      for (let r = firstDataRow + 1; r <= lastRow; r++) {
+        for (let c = skipColumns + 1; c <= lastCol; c++) {
+          ws.getCell(r, c).value = null
         }
       }
 
-      // Write transformed rows starting at firstDataRow.
+      // Write transformed rows starting at firstDataRow (1-based: firstDataRow + 1).
       outputRows.forEach((outRow, rowIdx) => {
-        const r = firstDataRow + rowIdx
+        const r = firstDataRow + 1 + rowIdx
         targetFields.forEach((tf, colIdx) => {
-          const c = skipColumns + colIdx
-          const value = outRow[tf.name] ?? ''
-          ws[XLSX.utils.encode_cell({ r, c })] = { v: value, t: 's' }
+          const c = skipColumns + 1 + colIdx
+          ws.getCell(r, c).value = outRow[tf.name] ?? ''
         })
       })
 
-      // Expand the sheet range to cover all written rows/columns.
-      const lastDataRow = firstDataRow + outputRows.length - 1
-      const lastDataCol = skipColumns + targetFields.length - 1
-      sheetRange.e.r = Math.max(sheetRange.e.r, lastDataRow)
-      sheetRange.e.c = Math.max(sheetRange.e.c, lastDataCol)
-      ws['!ref'] = XLSX.utils.encode_range(sheetRange)
-
-      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
-      fs.writeFileSync(outFilePath, buf)
+      const buf = await wb.xlsx.writeBuffer()
+      fs.writeFileSync(outFilePath, Buffer.from(buf as ArrayBuffer))
     } else if (format === 'xlsx') {
       // ── Standard from-scratch XLSX output ────────────────────────────────────
-      const ws = XLSX.utils.json_to_sheet(outputRows)
-      const wb = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb, ws, targetObj.name.slice(0, 31))
-      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
-      fs.writeFileSync(outFilePath, buf)
+      const wb = new ExcelJS.Workbook()
+      const ws = wb.addWorksheet(targetObj.name.slice(0, 31))
+      const headers = targetFields.map(tf => tf.name)
+      ws.addRow(headers)
+      for (const row of outputRows) {
+        ws.addRow(headers.map(h => row[h] ?? ''))
+      }
+      const buf = await wb.xlsx.writeBuffer()
+      fs.writeFileSync(outFilePath, Buffer.from(buf as ArrayBuffer))
     } else {
       const headers = targetFields.map(f => f.name)
       const csvLines = [headers.join(',')]

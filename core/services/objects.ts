@@ -88,15 +88,15 @@ function getProjectId(): string {
 // ── Service functions ─────────────────────────────────────────────────────────
 
 /** Infer schema from an Excel/CSV file without touching the DB. */
-export function inferSchemaFromFile(filePath: string, options?: ParseOptions) {
-  const { headers, rows } = parseFile(filePath, 200, options)
+export async function inferSchemaFromFile(filePath: string, options?: ParseOptions) {
+  const { headers, rows } = await parseFile(filePath, 200, options)
   const fields = inferSchema(headers, rows)
   return { headers, fields }
 }
 
 /** Read only the headers from a file (for target template import). */
-export function inferSchemaFromHeadersOnly(filePath: string, options?: ParseOptions) {
-  const headers = parseHeaders(filePath, options)
+export async function inferSchemaFromHeadersOnly(filePath: string, options?: ParseOptions) {
+  const headers = await parseHeaders(filePath, options)
   const fields = inferSchema(headers, [])
   return { headers, fields }
 }
@@ -204,9 +204,9 @@ export function deleteObject(id: string) {
  * Import rows from a file into an existing data object.
  * Replaces any existing source_rows for that object.
  */
-export function importRows(id: string, filePath: string, options?: ParseOptions) {
+export async function importRows(id: string, filePath: string, options?: ParseOptions) {
   const db = getDb()
-  const { rows } = parseFile(filePath, undefined, options)
+  const { rows } = await parseFile(filePath, undefined, options)
 
   const deleteRows = db.prepare('DELETE FROM source_rows WHERE object_id = ?')
   const insertRow = db.prepare(

@@ -3,7 +3,8 @@
  * executeTransformation and cancelRun live in core/engine.ts.
  */
 import fs from 'fs'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
+import { parse as csvParseSync } from 'csv-parse/sync'
 import { getDb } from '../db.js'
 
 // ── DB row shapes ─────────────────────────────────────────────────────────────
@@ -77,7 +78,7 @@ export function getRunIssues(runId: string, severity?: string) {
 }
 
 /** Return the first `limit` rows of an output file for preview. */
-export function previewOutput(runId: string, targetObjectId: string, limit = 100) {
+export async function previewOutput(runId: string, targetObjectId: string, limit = 100) {
   const db = getDb()
   const row = db.prepare('SELECT output_manifest FROM runs WHERE id = ?').get(runId) as
     | { output_manifest: string | null }
@@ -91,31 +92,53 @@ export function previewOutput(runId: string, targetObjectId: string, limit = 100
   if (!target) throw new Error('Target not found in manifest.')
   if (!fs.existsSync(target.filePath)) throw new Error('Output file has been cleaned up. Re-run the transformation.')
 
-  let wb: XLSX.WorkBook
+  let headers: string[]
+  let allDataRows: Record<string, string>[]
+
   if (target.format === 'csv') {
     const content = fs.readFileSync(target.filePath, 'utf-8')
-    wb = XLSX.read(content, { type: 'string' })
+    const parsed = csvParseSync(content, {
+      skip_empty_lines: true, relax_quotes: true, relax_column_count: true, cast: false,
+    }) as string[][]
+    headers = (parsed[0] ?? []).map(h => String(h ?? '').trim())
+    allDataRows = parsed.slice(1).map(row =>
+      Object.fromEntries(headers.map((h, i) => [h, String(row[i] ?? '')]))
+    )
   } else {
     const buf = fs.readFileSync(target.filePath)
-    wb = XLSX.read(buf, { raw: false, cellDates: false })
+    const wb = new ExcelJS.Workbook()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await wb.xlsx.load(buf as any)
+    const ws = wb.getWorksheet(1)
+    if (!ws) return { headers: [], rows: [], totalRows: 0 }
+    const rawRows: string[][] = []
+    ws.eachRow({ includeEmpty: false }, row => {
+      const vals = (row.values as (ExcelJS.CellValue | undefined)[]).slice(1)
+      rawRows.push(vals.map(v => {
+        if (v === null || v === undefined) return ''
+        if (v instanceof Date) return v.toISOString().split('T')[0]
+        if (typeof v === 'object') {
+          if ('richText' in v) return (v as ExcelJS.CellRichTextValue).richText.map(r => r.text).join('')
+          if ('formula' in v || 'sharedFormula' in v) return String((v as ExcelJS.CellFormulaValue).result ?? '')
+          if ('hyperlink' in v) return String((v as ExcelJS.CellHyperlinkValue).text ?? '')
+        }
+        return String(v)
+      }))
+    })
+    headers = (rawRows[0] ?? []).map(h => String(h ?? '').trim())
+    allDataRows = rawRows.slice(1).map(row =>
+      Object.fromEntries(headers.map((h, i) => [h, String(row[i] ?? '')]))
+    )
   }
 
-  const ws = wb.Sheets[wb.SheetNames[0]]
-  const allRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
-  const previewRows = allRows.slice(0, limit)
-  const allHeaders = previewRows.length > 0 ? Object.keys(previewRows[0]) : []
-  // Map __EMPTY* keys to '' for display; use numeric index keys in row objects
-  // so duplicate empty headers don't overwrite each other's values.
-  const headers = allHeaders.map(h => h.startsWith('__EMPTY') ? '' : h)
+  const previewRows = allDataRows.slice(0, limit)
+  // Use numeric index keys so duplicate/empty column names don't collide in the row objects
   const rows = previewRows.map(r => {
     const out: Record<string, string> = {}
-    for (let i = 0; i < allHeaders.length; i++) {
-      out[String(i)] = String(r[allHeaders[i]] ?? '')
-    }
+    headers.forEach((h, i) => { out[String(i)] = r[h] ?? '' })
     return out
   })
-
-  return { headers, rows, totalRows: allRows.length }
+  return { headers, rows, totalRows: allDataRows.length }
 }
 
 /** Copy an output file to a user-chosen destination path. */
