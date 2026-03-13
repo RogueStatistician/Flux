@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"from ''electron''\" /home/simone/code/Flux/core/db.ts /home/simone/code/Flux/core/importer.ts /home/simone/code/Flux/core/engine.ts /home/simone/code/Flux/core/services/*.ts)",
+      "Bash(grep -n \"from ''electron''\" /home/simone/code/Flux/electron/db.ts /home/simone/code/Flux/electron/importer.ts /home/simone/code/Flux/electron/engine.ts /home/simone/code/Flux/electron/ipc/*.ts)",
+      "Bash(grep -rn \"from ''../db''\" /home/simone/code/Flux/electron/ipc/)",
+      "Bash(grep -rn \"from ''../importer''\" /home/simone/code/Flux/electron/ipc/)",
+      "Bash(npx tsc:*)",
+      "Bash(timeout 10 npx tsx web-server/server.ts)"
+    ]
+  }
+}

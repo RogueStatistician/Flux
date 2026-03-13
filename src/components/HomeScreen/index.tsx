@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { platform } from '@/platform/index'
 import type { RecentProject } from '../../types/index.js'
 import { useAppStore } from '../../store/index.js'
 
@@ -11,8 +12,7 @@ export function HomeScreen() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!window.electronAPI) return
-    window.electronAPI.listRecentProjects().then(setRecents).catch(() => setRecents([]))
+    platform.listRecentProjects().then(setRecents).catch(() => setRecents([]))
   }, [])
 
   const handleCreate = async () => {
@@ -20,7 +20,7 @@ export function HomeScreen() {
     setIsCreating(true)
     setError(null)
     try {
-      const meta = await window.electronAPI.createProject(newName.trim())
+      const meta = await platform.createProject(newName.trim())
       if (meta) openProject(meta)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create project.')
@@ -32,13 +32,13 @@ export function HomeScreen() {
   const handleOpenFile = async () => {
     setError(null)
     try {
-      const result = await window.electronAPI.openFile({
+      const result = await platform.openFile({
         title: 'Open Flux Project',
         filters: [{ name: 'Flux Projects', extensions: ['flux'] }],
         properties: ['openFile'],
       })
       if (result.canceled || !result.filePaths[0]) return
-      const meta = await window.electronAPI.openProject(result.filePaths[0])
+      const meta = await platform.openProject(result.filePaths[0])
       openProject(meta)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to open project.')
@@ -48,7 +48,7 @@ export function HomeScreen() {
   const handleOpenRecent = async (filePath: string) => {
     setError(null)
     try {
-      const meta = await window.electronAPI.openProject(filePath)
+      const meta = await platform.openProject(filePath)
       openProject(meta)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to open project.')
@@ -57,7 +57,7 @@ export function HomeScreen() {
 
   const handleRemoveRecent = async (e: React.MouseEvent, filePath: string) => {
     e.stopPropagation()
-    await window.electronAPI.removeRecentProject(filePath).catch(() => {})
+    await platform.removeRecentProject(filePath).catch(() => {})
     setRecents(prev => prev.filter(r => r.filePath !== filePath))
   }
 

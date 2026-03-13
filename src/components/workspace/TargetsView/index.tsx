@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { platform } from '@/platform/index'
 import type { DataObject } from '../../../types/index.js'
 import { ObjectCard } from '../ObjectCard.js'
 import { ImportWizard } from '../ImportWizard.js'
@@ -14,14 +15,14 @@ export function TargetsView() {
   const [selectedObject, setSelectedObject] = useState<DataObject | null>(null)
 
   const load = useCallback(() => {
-    window.electronAPI.listObjects('target').then(setObjects).finally(() => setLoading(false))
+    platform.listObjects('target').then(setObjects).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => { load() }, [load])
 
   const openWizard = async (mode: AddMode) => {
     if (mode === 'upload') {
-      const result = await window.electronAPI.openFile({
+      const result = await platform.openFile({
         title: 'Select target template',
         filters: [{ name: 'Excel / CSV', extensions: ['xlsx', 'xls', 'csv'] }],
         properties: ['openFile'],
@@ -41,7 +42,7 @@ export function TargetsView() {
   }
 
   const handleDelete = async (id: string) => {
-    await window.electronAPI.deleteObject(id)
+    await platform.deleteObject(id)
     setObjects(prev => prev.filter(o => o.id !== id))
     if (selectedObject?.id === id) setSelectedObject(null)
   }

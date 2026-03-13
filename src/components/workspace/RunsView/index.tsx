@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { platform } from '@/platform/index'
 import type { Transformation, Run, RunIssue } from '../../../types/index.js'
 import type { RunProgressEvent, OutputManifestTarget } from '../../../electron.d.js'
 
@@ -54,19 +55,18 @@ function RunDetailPanel({
   }, [manifest])
 
   useEffect(() => {
-    if (!window.electronAPI) return
-    window.electronAPI.getRunIssues(run.id).then(iss => {
+    platform.getRunIssues(run.id).then(iss => {
       setIssues(iss)
       setLoadingIssues(false)
     })
   }, [run.id])
 
   useEffect(() => {
-    if (!previewTargetId || !window.electronAPI) return
+    if (!previewTargetId) return
     setPreviewLoading(true)
     setPreviewError(null)
     setPreview(null)
-    window.electronAPI.previewOutput(run.id, previewTargetId, 100)
+    platform.previewOutput(run.id, previewTargetId, 100)
       .then(data => setPreview(data))
       .catch(err => setPreviewError(err instanceof Error ? err.message : String(err)))
       .finally(() => setPreviewLoading(false))
@@ -74,7 +74,7 @@ function RunDetailPanel({
 
   const handleSaveOutput = async (target: OutputManifestTarget) => {
     const ext = target.format === 'xlsx' ? '.xlsx' : '.csv'
-    const result = await window.electronAPI.saveFile({
+    const result = await platform.saveFile({
       title: 'Save output file',
       defaultPath: `${target.objectName}${ext}`,
       filters: target.format === 'xlsx'
@@ -83,7 +83,7 @@ function RunDetailPanel({
     })
     if (result.canceled || !result.filePath) return
     try {
-      await window.electronAPI.saveOutput(run.id, target.objectId, result.filePath)
+      await platform.saveOutput(run.id, target.objectId, result.filePath)
     } catch (err) {
       alert(`Save failed: ${String(err)}`)
     }
@@ -319,8 +319,7 @@ export function RunsView() {
 
   // Load transformations on mount
   useEffect(() => {
-    if (!window.electronAPI) return
-    window.electronAPI.listTransformations().then(list => {
+    platform.listTransformations().then(list => {
       setTransformations(list)
       if (list.length > 0) setSelectedTransId(list[0].id)
       setLoading(false)
@@ -329,8 +328,8 @@ export function RunsView() {
 
   // Load runs whenever selected transformation changes
   const loadRuns = useCallback(async () => {
-    if (!selectedTransId || !window.electronAPI) return
-    const list = await window.electronAPI.listRuns(selectedTransId)
+    if (!selectedTransId) return
+    const list = await platform.listRuns(selectedTransId)
     setRuns(list)
   }, [selectedTransId])
 
@@ -349,20 +348,20 @@ export function RunsView() {
   }, [])
 
   const handleRun = async () => {
-    if (!selectedTransId || !window.electronAPI) return
+    if (!selectedTransId) return
     setRunning(true)
     setProgress({ runId: '', status: 'running', phase: 'loading' })
 
     // Subscribe to progress events
     if (unsubRef.current) unsubRef.current()
-    unsubRef.current = window.electronAPI.onRunProgress(evt => {
+    unsubRef.current = platform.onRunProgress(evt => {
       setProgress(evt)
       if (evt.status === 'completed' || evt.status === 'failed') {
         setRunning(false)
         setActiveRunId(null)
         // Refresh the run list
-        if (window.electronAPI) {
-          window.electronAPI.listRuns(selectedTransId).then(list => setRuns(list))
+        {
+          platform.listRuns(selectedTransId).then(list => setRuns(list))
         }
         // Unsubscribe
         if (unsubRef.current) {
@@ -375,7 +374,7 @@ export function RunsView() {
     })
 
     try {
-      const runId = await window.electronAPI.startRun(selectedTransId)
+      const runId = await platform.startRun(selectedTransId)
       setActiveRunId(runId)
     } catch (err) {
       alert(`Failed to start run: ${String(err)}`)
@@ -386,18 +385,14 @@ export function RunsView() {
   }
 
   const handleCancel = async () => {
-    if (!activeRunId || !window.electronAPI) return
-    await window.electronAPI.cancelRun(activeRunId)
+    if (!activeRunId) return
+    await platform.cancelRun(activeRunId)
   }
 
   const handleViewDetail = async (run: Run) => {
     // Refresh the run from DB to get latest manifest/stats
-    if (window.electronAPI) {
-      const fresh = await window.electronAPI.getRun(run.id)
-      setDetailRun(fresh)
-    } else {
-      setDetailRun(run)
-    }
+    const fresh = await platform.getRun(run.id)
+    setDetailRun(fresh ?? run)
   }
 
   const selectedTrans = transformations.find(t => t.id === selectedTransId)
@@ -517,7 +512,7 @@ export function RunsView() {
                             key={t.objectId}
                             onClick={async () => {
                               const ext = t.format === 'xlsx' ? '.xlsx' : '.csv'
-                              const res = await window.electronAPI.saveFile({
+                              const res = await platform.saveFile({
                                 title: 'Save output',
                                 defaultPath: `${t.objectName}${ext}`,
                                 filters: t.format === 'xlsx'
@@ -526,7 +521,7 @@ export function RunsView() {
                               })
                               if (!res.canceled && res.filePath) {
                                 try {
-                                  await window.electronAPI.saveOutput(run.id, t.objectId, res.filePath)
+                                  await platform.saveOutput(run.id, t.objectId, res.filePath)
                                 } catch (e) {
                                   alert(`Save failed: ${String(e)}`)
                                 }

@@ -1,4 +1,5 @@
 /**
+import { platform } from '@/platform/index'
  * ImportWizard — 3-step overlay for importing a data object.
  *
  * Sources:  file → infer schema → edit schema → metadata → create + import rows
@@ -97,8 +98,7 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
 
   // Load picklists for the matching side once
   useEffect(() => {
-    if (!window.electronAPI) return
-    window.electronAPI.listPicklists(role === 'source' ? 'source' : 'target')
+    platform.listPicklists(role === 'source' ? 'source' : 'target')
       .then(setPicklists)
       .catch(() => {})
   }, [role])
@@ -119,8 +119,8 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
       }
       const hasOpts = Object.keys(opts).length > 0
       const inferFn = role === 'target'
-        ? window.electronAPI.inferSchemaFromHeaders(filePath, hasOpts ? opts : undefined)
-        : window.electronAPI.inferSchema(filePath, hasOpts ? opts : undefined)
+        ? platform.inferSchemaFromHeaders(filePath, hasOpts ? opts : undefined)
+        : platform.inferSchema(filePath, hasOpts ? opts : undefined)
       const { fields: inferred } = await inferFn
       setFields(inferred.map(f => ({
         _key: makeKey(),
@@ -192,7 +192,7 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
           }
         : undefined
 
-      const object = await window.electronAPI.createObject(
+      const object = await platform.createObject(
         role, name.trim(), description.trim() || undefined,
         systemName.trim() || undefined,
         role === 'target' ? outputFormat : 'xlsx',
@@ -200,7 +200,7 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
       )
 
       if (fields.length > 0) {
-        await window.electronAPI.upsertFields(
+        await platform.upsertFields(
           object.id,
           fields.map(({ _key: _k, ...f }) => f)
         )
@@ -215,7 +215,7 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
           ...(dataStartRow0 !== skipRows + 1 ? { dataStartRow: dataStartRow0 } : {}),
           ...(skipColumns > 0 ? { skipColumns } : {}),
         }
-        await window.electronAPI.importRows(
+        await platform.importRows(
           object.id, filePath,
           Object.keys(opts).length ? opts : undefined
         )

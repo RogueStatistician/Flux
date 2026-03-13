@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { platform } from '@/platform/index'
 import type { Picklist, PicklistSide } from '../../../types/index.js'
 import { PicklistDetailOverlay } from '../PicklistDetailOverlay.js'
 
@@ -65,7 +66,7 @@ function PicklistCard({
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation()
     if (!confirmDelete) { setConfirmDelete(true); return }
-    await window.electronAPI.deletePicklist(picklist.id)
+    await platform.deletePicklist(picklist.id)
     onDelete()
   }
 
@@ -133,7 +134,7 @@ function PicklistColumn({
     if (!newName.trim()) return
     setCreating(true)
     try {
-      const pl = await window.electronAPI.createPicklist(side, newName.trim(), newDesc.trim() || undefined)
+      const pl = await platform.createPicklist(side, newName.trim(), newDesc.trim() || undefined)
       onCreated(pl)
       setNewName('')
       setNewDesc('')
@@ -144,7 +145,7 @@ function PicklistColumn({
   }
 
   const handleBulkImport = async () => {
-    const res = await window.electronAPI.openFile({
+    const res = await platform.openFile({
       title: 'Select bulk picklist file',
       filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
       properties: ['openFile'],
@@ -152,7 +153,7 @@ function PicklistColumn({
     if (res.canceled || !res.filePaths[0]) return
     setBulkImporting(true)
     try {
-      const result = await window.electronAPI.bulkImportPicklistsFromFile(res.filePaths[0], side)
+      const result = await platform.bulkImportPicklistsFromFile(res.filePaths[0], side)
       onBulkImported(result)
     } finally {
       setBulkImporting(false)
@@ -250,12 +251,12 @@ export function PicklistsView() {
   const [bulkResult, setBulkResult] = useState<BulkResult | null>(null)
 
   const load = useCallback(async () => {
-    const all = await window.electronAPI.listPicklists()
+    const all = await platform.listPicklists()
     setPicklists(all)
     // Load value counts in parallel
     const counts: Record<string, number> = {}
     await Promise.all(all.map(async pl => {
-      const { values } = await window.electronAPI.getPicklist(pl.id)
+      const { values } = await platform.getPicklist(pl.id)
       counts[pl.id] = values.length
     }))
     setValueCounts(counts)

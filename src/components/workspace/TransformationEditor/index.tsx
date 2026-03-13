@@ -1,4 +1,5 @@
 /**
+import { platform } from '@/platform/index'
  * TransformationEditor — pipeline-style React Flow canvas.
  *
  * Layout:
@@ -272,13 +273,13 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
     async function load() {
       try {
         const [t, objects] = await Promise.all([
-          window.electronAPI.getTransformation(transformationId),
-          window.electronAPI.listObjects(),
+          platform.getTransformation(transformationId),
+          platform.listObjects(),
         ])
-        const fieldResults = await Promise.all(objects.map(o => window.electronAPI.getObject(o.id)))
+        const fieldResults = await Promise.all(objects.map(o => platform.getObject(o.id)))
         const fMap: Record<string, ObjectField[]> = {}
         fieldResults.forEach(r => { fMap[r.object.id] = r.fields })
-        const mappings = await window.electronAPI.getFieldMappings(transformationId)
+        const mappings = await platform.getFieldMappings(transformationId)
         if (cancelled) return
 
         setTransformation(t)
@@ -295,7 +296,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
         if (!cancelled) setLoading(false)
       }
     }
-    if (window.electronAPI) load()
+    load()
     return () => { cancelled = true }
   }, [transformationId])
 
@@ -316,7 +317,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
   const scheduleSave = useCallback((currentNodes: Node[], currentEdges: Edge[]) => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
-      window.electronAPI?.saveCanvas(transformationId, serializeCanvas(currentNodes, currentEdges)).catch(() => {})
+      platform.saveCanvas(transformationId, serializeCanvas(currentNodes, currentEdges)).catch(() => {})
     }, SAVE_DEBOUNCE_MS)
   }, [transformationId])
 
@@ -344,12 +345,12 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
 
       if (otherMapNodes.length > 0) {
         // Scoped delete: only this node's rules (keep sibling MapNode rules intact).
-        window.electronAPI?.deleteFieldMappingsByNode(nodeId)
+        platform.deleteFieldMappingsByNode(nodeId)
           .then(() => setFieldMappings(prev => prev.filter(m => m.mapNodeId !== nodeId)))
           .catch(() => {})
       } else {
         // Last MapNode for target: full delete (covers both new-style and legacy null-scoped rows).
-        window.electronAPI?.deleteFieldMappingsByTarget(transformationId, targetObjectId)
+        platform.deleteFieldMappingsByTarget(transformationId, targetObjectId)
           .then(() => setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId)))
           .catch(() => {})
       }
@@ -373,11 +374,11 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
       if (targetNode?.type !== 'mapOperator') continue
       const targetObjectId = (targetNode.data as Record<string, unknown>).targetObjectId as string
       if (targetNode.id === `map-${targetObjectId}`) {
-        window.electronAPI?.deleteFieldMappingsByTarget(transformationId, targetObjectId)
+        platform.deleteFieldMappingsByTarget(transformationId, targetObjectId)
           .then(() => setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId)))
           .catch(() => {})
       } else {
-        window.electronAPI?.deleteFieldMappingsByNode(targetNode.id)
+        platform.deleteFieldMappingsByNode(targetNode.id)
           .then(() => setFieldMappings(prev => prev.filter(m => m.mapNodeId !== targetNode.id)))
           .catch(() => {})
       }
@@ -438,11 +439,11 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
         if (!mapNode) continue
         const targetObjectId = (mapNode.data as Record<string, unknown>).targetObjectId as string
         if (mapNodeId === `map-${targetObjectId}`) {
-          window.electronAPI?.deleteFieldMappingsByTarget(transformationId, targetObjectId)
+          platform.deleteFieldMappingsByTarget(transformationId, targetObjectId)
             .then(() => setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId)))
             .catch(() => {})
         } else {
-          window.electronAPI?.deleteFieldMappingsByNode(mapNodeId)
+          platform.deleteFieldMappingsByNode(mapNodeId)
             .then(() => setFieldMappings(prev => prev.filter(m => m.mapNodeId !== mapNodeId)))
             .catch(() => {})
         }
@@ -497,7 +498,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
         return updated
       })
       // Delete ALL field mapping rules for this target (all MapNodes + legacy null-scoped)
-      window.electronAPI?.deleteFieldMappingsByTarget(transformationId, obj.id).then(() => {
+      platform.deleteFieldMappingsByTarget(transformationId, obj.id).then(() => {
         setFieldMappings(prev => prev.filter(m => m.targetObjectId !== obj.id))
       }).catch(() => {})
     } else {
@@ -684,11 +685,11 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
           (n.data as Record<string, unknown>).targetObjectId === targetObjectId
         )
         if (otherMaps.length > 0) {
-          window.electronAPI?.deleteFieldMappingsByNode(nodeId)
+          platform.deleteFieldMappingsByNode(nodeId)
             .then(() => setFieldMappings(prev => prev.filter(m => m.mapNodeId !== nodeId)))
             .catch(() => {})
         } else {
-          window.electronAPI?.deleteFieldMappingsByTarget(transformationId, targetObjectId)
+          platform.deleteFieldMappingsByTarget(transformationId, targetObjectId)
             .then(() => setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId)))
             .catch(() => {})
         }

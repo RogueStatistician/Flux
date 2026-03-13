@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { platform } from '@/platform/index'
 import type { PicklistMapping, Picklist } from '../../../types/index.js'
 import { MappingEditorOverlay } from '../MappingEditorOverlay.js'
 
@@ -69,7 +70,7 @@ function MappingCard({
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation()
     if (!confirmDelete) { setConfirmDelete(true); return }
-    await window.electronAPI.deletePlMapping(mapping.id)
+    await platform.deletePlMapping(mapping.id)
     onDelete()
   }
 
@@ -127,14 +128,14 @@ export function PLMappingsView() {
 
   const load = useCallback(async () => {
     const [all, pls] = await Promise.all([
-      window.electronAPI.listPlMappings(),
-      window.electronAPI.listPicklists(),
+      platform.listPlMappings(),
+      platform.listPicklists(),
     ])
     setMappings(all)
     setPicklists(pls)
     const counts: Record<string, number> = {}
     await Promise.all(all.map(async m => {
-      const { entries } = await window.electronAPI.getPlMapping(m.id)
+      const { entries } = await platform.getPlMapping(m.id)
       counts[m.id] = entries.length
     }))
     setEntryCounts(counts)
@@ -149,7 +150,7 @@ export function PLMappingsView() {
     if (!newName.trim()) return
     setCreating(true)
     try {
-      const m = await window.electronAPI.createPlMapping(newName.trim())
+      const m = await platform.createPlMapping(newName.trim())
       setMappings(prev => [...prev, m])
       setEntryCounts(prev => ({ ...prev, [m.id]: 0 }))
       setNewName('')
@@ -171,7 +172,7 @@ export function PLMappingsView() {
   }
 
   const handleBulkImport = async () => {
-    const res = await window.electronAPI.openFile({
+    const res = await platform.openFile({
       title: 'Select bulk mapping file',
       filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
       properties: ['openFile'],
@@ -179,7 +180,7 @@ export function PLMappingsView() {
     if (res.canceled || !res.filePaths[0]) return
     setBulkImporting(true)
     try {
-      const result = await window.electronAPI.bulkImportPlMappingsFromFile(res.filePaths[0])
+      const result = await platform.bulkImportPlMappingsFromFile(res.filePaths[0])
       setBulkResult(result)
       load()
     } finally {

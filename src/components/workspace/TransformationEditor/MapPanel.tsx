@@ -1,4 +1,5 @@
 /**
+import { platform } from '@/platform/index'
  * MapPanel — modal dialog for configuring per-field mapping rules.
  * Opens when clicking a MapOperatorNode.
  */
@@ -605,10 +606,9 @@ export function MapPanel({
   const [picklistMappings, setPicklistMappings] = useState<PicklistMapping[]>([])
 
   useEffect(() => {
-    if (!window.electronAPI) return
     Promise.all([
-      window.electronAPI.listPicklists(),
-      window.electronAPI.listPlMappings(),
+      platform.listPicklists(),
+      platform.listPlMappings(),
     ]).then(([pls, plms]) => {
       setPicklists(pls)
       setPicklistMappings(plms)
@@ -646,10 +646,10 @@ export function MapPanel({
           const rule = rules[field.id] ?? { ruleType: '', config: {} }
           const existing = existingMappings.find(m => m.targetFieldId === field.id)
           if (rule.ruleType === '') {
-            return existing ? window.electronAPI.deleteFieldMapping(existing.id) : Promise.resolve()
+            return existing ? platform.deleteFieldMapping(existing.id) : Promise.resolve()
           }
           const finalConfig = enrichConfig(field, rule)
-          return window.electronAPI.createFieldMapping(
+          return platform.createFieldMapping(
             transformationId,
             targetObjectId,
             field.id,
@@ -660,7 +660,7 @@ export function MapPanel({
           )
         })
       )
-      const newMappings = await window.electronAPI.getFieldMappings(transformationId)
+      const newMappings = await platform.getFieldMappings(transformationId)
       onSaved(newMappings)
       onClose()
     } catch (e) {
