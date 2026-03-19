@@ -10,6 +10,7 @@ import cors from 'cors'
 import cookieParser from 'cookie-parser'
 import helmet from 'helmet'
 import path from 'path'
+import fs from 'fs'
 import { fileURLToPath } from 'url'
 import os from 'os'
 import { configureEngine } from '../core/engine.js'
@@ -99,9 +100,23 @@ app.use('/api', adminRouter)
 // Serve the built React app from dist/ (production only)
 const distDir = path.join(__dirname, '../dist')
 app.use(express.static(distDir))
-app.get('/{*path}', (_req, res) => {
-  res.sendFile(path.join(distDir, 'index.html'))
-})
+
+// SPA fallback: inject <base href="/"> so asset URLs are always absolute,
+// regardless of the current route depth (e.g. /invite/:token).
+let _indexHtml: string | null = null
+function serveIndex(_req: express.Request, res: express.Response) {
+  if (!_indexHtml) {
+    const raw = fs.readFileSync(path.join(distDir, 'index.html'), 'utf-8')
+    // Only inject if no base tag already present
+    _indexHtml = raw.includes('<base ')
+      ? raw
+      : raw.replace('<head>', '<head><base href="/">')
+  }
+  res.setHeader('Content-Type', 'text/html')
+  res.send(_indexHtml)
+}
+
+app.get('/{*path}', serveIndex)
 
 app.listen(PORT, () => {
   console.log(`Flux web server running at http://localhost:${PORT}`)
