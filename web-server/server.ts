@@ -97,8 +97,8 @@ app.use('/api', runsRouter)
 app.use('/api', filesRouter)
 app.use('/api', adminRouter)
 
-// Serve the built React app from dist/ (production only)
-const distDir = path.join(__dirname, '../dist')
+// Serve the built React app from dist-web/ (web build, separate from Electron dist/)
+const distDir = path.join(__dirname, '../dist-web')
 app.use(express.static(distDir))
 
 // SPA fallback: inject <base href="/"> so asset URLs are always absolute,

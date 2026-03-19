@@ -369,8 +369,10 @@ router.post(
   (req, res) => {
     const role = (req.body as { role?: unknown }).role === 'admin' ? 'admin' : 'user'
     const invite = createInviteToken(req.user!.sub, role)
-    const origin = `${req.protocol}://${req.get('host')}`
-    res.status(201).json({ ...invite, inviteUrl: `${origin}/invite/${invite.token}` })
+    // Return the token only — the client builds the invite URL from its own
+    // window.location.origin so the link works regardless of which port/host
+    // the user is accessing (dev proxy on :5173 vs production on :3001).
+    res.status(201).json(invite)
   }
 )
 

@@ -136,8 +136,8 @@ function UsersTab() {
         body: JSON.stringify({ role: inviteRole }),
       })
       if (!res.ok) throw new Error('Failed to create invite.')
-      const data = await res.json() as { inviteUrl: string }
-      setInviteUrl(data.inviteUrl)
+      const data = await res.json() as { token: string }
+      setInviteUrl(`${window.location.origin}/invite/${data.token}`)
       load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create invite.')

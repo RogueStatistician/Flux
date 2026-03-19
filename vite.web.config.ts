@@ -22,10 +22,8 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist',
+    outDir: 'dist-web',
     emptyOutDir: true,
-    // Ensure asset URLs are absolute (/assets/...) so deep routes like
-    // /invite/:token don't resolve them relative to their own path segment.
     assetsDir: 'assets',
   },
   base: '/',
