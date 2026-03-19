@@ -9,8 +9,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "dev:web": "concurrently \"npx tsx --watch web-server/server.ts\" \"vite --config vite.web.config.ts\"",
-    "start:web": "npx tsx web-server/server.ts",
+    "dev:web": "concurrently \"npx tsx --env-file=.env --watch web-server/server.ts\" \"vite --config vite.web.config.ts\"",
+    "start:web": "npx tsx --env-file=.env web-server/server.ts",
     "build": "tsc && vite build && electron-builder",
     "build:renderer": "vite build",
     "build:web": "vite build --config vite.web.config.ts",
