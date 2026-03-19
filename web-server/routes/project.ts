@@ -334,7 +334,7 @@ router.get('/project/users', (req, res) => {
     }
 
     const users = listUsers()
-    res.json(users.map(u => ({ id: u.id, username: u.username })))
+    res.json(users.map(u => ({ id: u.id, username: u.username, systemRole: u.role })))
   } catch (e) { res.status(500).send(e instanceof Error ? e.message : String(e)) }
 })
 

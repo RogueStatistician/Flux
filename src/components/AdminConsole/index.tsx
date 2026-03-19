@@ -610,7 +610,7 @@ export function AdminConsole() {
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
       {/* Sidebar */}
-      <aside className="w-52 bg-gray-900 flex flex-col shrink-0">
+      <aside className="w-52 bg-gray-800 flex flex-col shrink-0">
         <div className="px-4 py-4 border-b border-gray-700">
           <div className="flex items-center gap-2 mb-1">
             <div className="w-6 h-6 bg-blue-600 rounded-md flex items-center justify-center shrink-0">
@@ -633,7 +633,7 @@ export function AdminConsole() {
                 'w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 transition-colors',
                 tab === item.id
                   ? 'bg-blue-600 text-white font-medium'
-                  : 'text-gray-400 hover:bg-gray-800 hover:text-white',
+                  : 'text-gray-200 hover:bg-gray-700 hover:text-white',
               ].join(' ')}
             >
               <span className="text-base leading-none w-4 text-center">{item.icon}</span>
@@ -645,13 +645,13 @@ export function AdminConsole() {
         <div className="p-3 border-t border-gray-700 flex flex-col gap-1">
           <button
             onClick={handleBack}
-            className="w-full text-left text-xs text-gray-500 hover:text-gray-200 transition-colors py-1"
+            className="w-full text-left text-xs text-gray-200 hover:text-white transition-colors py-1"
           >
             ← Back
           </button>
           <button
             onClick={handleLogout}
-            className="w-full text-left text-xs text-gray-600 hover:text-gray-300 transition-colors py-1 mt-1 border-t border-gray-800 pt-2"
+            className="w-full text-left text-xs text-gray-400 hover:text-gray-200 transition-colors py-1 mt-1 border-t border-gray-700 pt-2"
           >
             Sign out
           </button>

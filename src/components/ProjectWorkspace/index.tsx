@@ -225,38 +225,45 @@ function ChangePasswordPanel({ onCancel }: { onCancel: () => void }) {
   )
 }
 
-// ── Share panel ───────────────────────────────────────────────────────────────
+// ── Share modal ───────────────────────────────────────────────────────────────
 
-interface Member { userId: string; username: string; role: string }
-interface UserOption { id: string; username: string }
+interface Member    { userId: string; username: string; role: string }
+interface UserOption { id: string; username: string; systemRole: 'admin' | 'user' }
 
-function SharePanel({ onClose }: { onClose: () => void }) {
+function ShareModal({ onClose }: { onClose: () => void }) {
+  const user = useAuthStore(s => s.user)
+
   const [members,  setMembers]  = useState<Member[]>([])
   const [users,    setUsers]    = useState<UserOption[]>([])
-  const [selected, setSelected] = useState('')
+  const [search,   setSearch]   = useState('')
   const [role,     setRole]     = useState<'editor' | 'viewer'>('editor')
   const [busy,     setBusy]     = useState(false)
   const [error,    setError]    = useState<string | null>(null)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     Promise.all([
       fetch('/api/project/members', { credentials: 'include' }).then(r => r.json()),
       fetch('/api/project/users',   { credentials: 'include' }).then(r => r.json()),
     ]).then(([m, u]) => { setMembers(m as Member[]); setUsers(u as UserOption[]) }).catch(() => {})
   }, [])
 
-  const handleShare = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!selected) return
+  useEffect(() => { load() }, [load])
+
+  const handleShare = async (targetUser: UserOption) => {
     setBusy(true); setError(null)
     try {
       const res = await fetch('/api/project/share', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ userId: selected, role }),
+        body: JSON.stringify({ userId: targetUser.id, role }),
       })
-      if (!res.ok) { const d = await res.json().catch(() => ({})) as Record<string, string>; setError(d.message ?? 'Share failed.'); return }
-      setMembers(await res.json()); setSelected('')
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as Record<string, string>
+        setError(d.message ?? 'Share failed.')
+        return
+      }
+      setMembers(await res.json())
+      setSearch('')
     } catch { setError('Connection error.') } finally { setBusy(false) }
   }
 
@@ -267,60 +274,158 @@ function SharePanel({ onClose }: { onClose: () => void }) {
     } catch { /* ignore */ }
   }
 
-  const nonOwnerMembers = members.filter(m => m.role !== 'owner')
-  const availableUsers  = users.filter(u => !members.some(m => m.userId === u.id))
+  // Which users can still be added (not already members, not self)
+  const available = users.filter(u =>
+    !members.some(m => m.userId === u.id) && u.id !== user?.id
+  )
+
+  // Filter by search query
+  const filtered = search.trim()
+    ? available.filter(u => u.username.toLowerCase().includes(search.toLowerCase()))
+    : available
+
+  // Can the current user revoke a member?
+  // Project owner can revoke non-admin members; admins can't be removed by project owners
+  const canRevoke = (m: Member) =>
+    m.role !== 'owner' &&
+    users.find(u => u.id === m.userId)?.systemRole !== 'admin'
 
   return (
-    <div className="p-3 border-t border-gray-700 bg-gray-950">
-      <div className="flex items-center justify-between mb-2">
-        <p className="text-xs text-gray-300 font-medium">Share project</p>
-        <button onClick={onClose} className="text-gray-600 hover:text-gray-400 text-xs">✕</button>
-      </div>
-      {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
-
-      {/* Current members */}
-      {nonOwnerMembers.length > 0 && (
-        <div className="mb-2 space-y-1">
-          {nonOwnerMembers.map(m => (
-            <div key={m.userId} className="flex items-center justify-between">
-              <span className="text-xs text-gray-400">{m.username}
-                <span className="ml-1 text-gray-600">({m.role})</span>
-              </span>
-              <button onClick={() => handleRevoke(m.userId)} className="text-xs text-red-900 hover:text-red-400 transition-colors">✕</button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Add user form */}
-      {availableUsers.length > 0 ? (
-        <form onSubmit={handleShare} className="space-y-2">
-          <select
-            value={selected}
-            onChange={e => setSelected(e.target.value)}
-            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
-          >
-            <option value="">Select user…</option>
-            {availableUsers.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
-          </select>
-          <div className="flex gap-1">
-            {(['editor', 'viewer'] as const).map(r => (
-              <label key={r} className="flex items-center gap-1 cursor-pointer">
-                <input type="radio" name="role" value={r} checked={role === r} onChange={() => setRole(r)} className="accent-blue-500" />
-                <span className="text-xs text-gray-400">{r}</span>
-              </label>
-            ))}
-          </div>
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[80vh]"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h2 className="text-sm font-semibold text-gray-900">Share project</h2>
           <button
-            type="submit" disabled={busy || !selected}
-            className="w-full text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white rounded py-1 transition-colors"
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors text-lg leading-none"
           >
-            {busy ? '…' : 'Share'}
+            ✕
           </button>
-        </form>
-      ) : (
-        <p className="text-xs text-gray-600">All users already have access.</p>
-      )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {/* Current members */}
+          <div className="px-5 pt-4 pb-2">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+              People with access
+            </p>
+            <div className="space-y-1">
+              {members.map(m => (
+                <div key={m.userId} className="flex items-center gap-3 py-1.5">
+                  <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center shrink-0">
+                    <span className="text-xs font-medium text-gray-500">
+                      {m.username[0].toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm text-gray-800">{m.username}</span>
+                    {m.userId === user?.id && (
+                      <span className="ml-1.5 text-xs text-blue-500">(you)</span>
+                    )}
+                  </div>
+                  <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${
+                    m.role === 'owner'  ? 'bg-blue-100 text-blue-700' :
+                    m.role === 'editor' ? 'bg-green-100 text-green-700' :
+                                          'bg-gray-100 text-gray-500'
+                  }`}>
+                    {m.role}
+                  </span>
+                  {canRevoke(m) && (
+                    <button
+                      onClick={() => handleRevoke(m.userId)}
+                      title="Remove access"
+                      className="shrink-0 text-gray-300 hover:text-red-500 transition-colors text-sm leading-none"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Add people */}
+          {available.length > 0 && (
+            <div className="px-5 pt-3 pb-4 border-t border-gray-100 mt-2">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                Add people
+              </p>
+
+              {/* Role selector */}
+              <div className="flex gap-3 mb-3">
+                {(['editor', 'viewer'] as const).map(r => (
+                  <label key={r} className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio" name="share-role" value={r}
+                      checked={role === r} onChange={() => setRole(r)}
+                      className="accent-blue-600"
+                    />
+                    <span className="text-xs text-gray-600 capitalize">{r}</span>
+                  </label>
+                ))}
+              </div>
+
+              {/* Search */}
+              <input
+                type="text"
+                placeholder="Search by username…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2"
+              />
+
+              {error && <p className="text-xs text-red-600 mb-2">{error}</p>}
+
+              {/* User list */}
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {filtered.length === 0 ? (
+                  <p className="text-xs text-gray-400 text-center py-3">
+                    {search ? 'No users match your search.' : 'No more users to add.'}
+                  </p>
+                ) : (
+                  filtered.map(u => (
+                    <button
+                      key={u.id}
+                      onClick={() => handleShare(u)}
+                      disabled={busy}
+                      className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-blue-50 transition-colors text-left disabled:opacity-50"
+                    >
+                      <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center shrink-0">
+                        <span className="text-xs font-medium text-gray-500">
+                          {u.username[0].toUpperCase()}
+                        </span>
+                      </div>
+                      <span className="flex-1 text-sm text-gray-800">{u.username}</span>
+                      {u.systemRole === 'admin' && (
+                        <span className="text-xs text-purple-500 font-medium">admin</span>
+                      )}
+                      <span className="text-xs text-blue-600 font-medium">Add as {role}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {available.length === 0 && members.length > 0 && (
+            <p className="px-5 pb-4 text-xs text-gray-400">All users already have access.</p>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-gray-100">
+          <button
+            onClick={onClose}
+            className="w-full text-sm text-gray-500 hover:text-gray-800 transition-colors py-1"
+          >
+            Done
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -341,6 +446,7 @@ export function ProjectWorkspace() {
   const [showChangePassword, setShowChangePassword] = useState(false)
   const [showShare,          setShowShare]          = useState(false)
 
+
   const handleLogout = useCallback(async () => {
     await fetch('/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {})
     clearUser()
@@ -355,8 +461,11 @@ export function ProjectWorkspace() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-white">
+      {/* ── Share modal (rendered over everything) ── */}
+      {showShare && <ShareModal onClose={() => setShowShare(false)} />}
+
       {/* ── Sidebar ── */}
-      <aside className="w-52 bg-gray-900 flex flex-col shrink-0">
+      <aside className="w-52 bg-gray-800 flex flex-col shrink-0">
         {/* Project identity */}
         <div className="px-4 py-4 border-b border-gray-700">
           <div className="flex items-center gap-2 mb-2">
@@ -381,7 +490,7 @@ export function ProjectWorkspace() {
                 'w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 transition-colors',
                 section === item.id
                   ? 'bg-blue-600 text-white font-medium'
-                  : 'text-gray-400 hover:bg-gray-800 hover:text-white',
+                  : 'text-gray-200 hover:bg-gray-700 hover:text-white',
               ].join(' ')}
             >
               <span className="text-base leading-none w-4 text-center">{item.icon}</span>
@@ -395,13 +504,11 @@ export function ProjectWorkspace() {
           <DeleteProjectPanel onCancel={() => setShowDeleteConfirm(false)} />
         ) : showChangePassword ? (
           <ChangePasswordPanel onCancel={() => setShowChangePassword(false)} />
-        ) : showShare ? (
-          <SharePanel onClose={() => setShowShare(false)} />
         ) : (
           <div className="p-3 border-t border-gray-700 flex flex-col gap-1">
             <button
               onClick={handleClose}
-              className="w-full text-left text-xs text-gray-500 hover:text-gray-200 transition-colors py-1"
+              className="w-full text-left text-xs text-gray-200 hover:text-white transition-colors py-1"
             >
               ← Close project
             </button>
@@ -414,13 +521,13 @@ export function ProjectWorkspace() {
                     a.download = (project?.name ?? 'project') + '.flux'
                     a.click()
                   }}
-                  className="w-full text-left text-xs text-gray-500 hover:text-gray-200 transition-colors py-1"
+                  className="w-full text-left text-xs text-gray-200 hover:text-white transition-colors py-1"
                 >
                   ↓ Download .flux
                 </button>
                 <button
                   onClick={() => setShowShare(true)}
-                  className="w-full text-left text-xs text-gray-500 hover:text-gray-200 transition-colors py-1"
+                  className="w-full text-left text-xs text-gray-200 hover:text-white transition-colors py-1"
                 >
                   Share project…
                 </button>
@@ -428,14 +535,14 @@ export function ProjectWorkspace() {
             )}
             <button
               onClick={() => setShowDeleteConfirm(true)}
-              className="w-full text-left text-xs text-red-900 hover:text-red-400 transition-colors py-1"
+              className="w-full text-left text-xs text-red-400 hover:text-red-300 transition-colors py-1"
             >
               Delete project…
             </button>
             {!isElectron && (
               <button
                 onClick={() => setShowChangePassword(true)}
-                className="w-full text-left text-xs text-gray-500 hover:text-gray-200 transition-colors py-1 mt-1 border-t border-gray-800 pt-2"
+                className="w-full text-left text-xs text-gray-300 hover:text-white transition-colors py-1 mt-1 border-t border-gray-700 pt-2"
               >
                 Change password…
               </button>
@@ -443,14 +550,14 @@ export function ProjectWorkspace() {
             {!isElectron && user?.role === 'admin' && (
               <button
                 onClick={() => setCurrentView('admin')}
-                className="w-full text-left text-xs text-gray-500 hover:text-gray-200 transition-colors py-1"
+                className="w-full text-left text-xs text-gray-300 hover:text-white transition-colors py-1"
               >
                 Admin Console
               </button>
             )}
             <button
               onClick={handleLogout}
-              className="w-full text-left text-xs text-gray-600 hover:text-gray-300 transition-colors py-1"
+              className="w-full text-left text-xs text-gray-400 hover:text-gray-200 transition-colors py-1"
             >
               Sign out
             </button>
