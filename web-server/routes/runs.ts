@@ -3,6 +3,7 @@ import fs from 'fs'
 import { executeTransformation, cancelRun } from '../../core/engine.js'
 import { getRun, listRuns, getRunIssues, previewOutput } from '../../core/services/runs.js'
 import { sseManager } from '../sse.js'
+import { registerRunOwner, unregisterRun } from '../run-registry.js'
 import { getDb } from '../../core/db.js'
 
 export const router = Router()
@@ -12,12 +13,29 @@ const wrap = (fn: (body: Record<string, unknown>) => unknown) => async (req: imp
   catch (e) { res.status(500).send(e instanceof Error ? e.message : String(e)) }
 }
 
-// SSE stream for run progress
+// SSE stream for run progress — scoped to the authenticated user
 router.get('/run/progress', (req, res) => {
-  sseManager.addClient(res)
+  const userId = req.user?.sub
+  if (!userId) { res.status(401).json({ code: 'UNAUTHORIZED' }); return }
+  sseManager.addClient(userId, res)
 })
 
-router.post('/run/start', wrap(({ transformationId }) => executeTransformation(transformationId as string)))
+// Start a run and register the requesting user as the owner of that run
+router.post('/run/start', async (req, res) => {
+  try {
+    const { transformationId } = req.body as Record<string, unknown>
+    const runId = await executeTransformation(transformationId as string)
+    const userId = req.user?.sub
+    if (userId) {
+      registerRunOwner(runId, userId)
+      // Unregister after a reasonable TTL (runs complete within minutes;
+      // this prevents indefinite memory growth for abandoned runs)
+      setTimeout(() => unregisterRun(runId), 60 * 60 * 1000)  // 1 hour
+    }
+    res.json(runId)
+  } catch (e) { res.status(500).send(e instanceof Error ? e.message : String(e)) }
+})
+
 router.post('/run/cancel', wrap(({ runId }) => { cancelRun(runId as string); return null }))
 router.post('/run/get', wrap(({ runId }) => getRun(runId as string)))
 router.post('/run/list', wrap(({ transformationId }) => listRuns(transformationId as string | undefined)))

@@ -10,15 +10,54 @@
  */
 import { DataObject, FieldMapping, InferredField, ObjectField, Picklist, PicklistMapping, PicklistMappingEntry, PicklistValue, ProjectMeta, RecentProject, Run, RunIssue, Transformation } from '@/types/index.js'
 import type { IPlatform, RunProgressEvent, OpenFileOptions, SaveFileOptions } from './IPlatform.js'
+import { useAuthStore } from '../store/auth.js'
 
 const BASE = '/api'
+
+// Promise-queue pattern: collapses concurrent refresh calls into a single round-trip
+let _refreshPromise: Promise<void> | null = null
+
+function ensureFreshToken(): Promise<void> {
+  if (!_refreshPromise) {
+    _refreshPromise = fetch('/auth/refresh', { method: 'POST', credentials: 'include' })
+      .then(r => { if (!r.ok) throw new Error('refresh_failed') })
+      .finally(() => { _refreshPromise = null })
+  }
+  return _refreshPromise
+}
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
+
+  if (res.status === 401) {
+    const data = await res.json().catch(() => ({})) as { code?: string }
+    if (data.code === 'TOKEN_EXPIRED') {
+      try {
+        await ensureFreshToken()
+        // Retry the original request once with fresh token
+        const retry = await fetch(`${BASE}${path}`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: body !== undefined ? JSON.stringify(body) : undefined,
+        })
+        if (retry.ok) return retry.json() as Promise<T>
+        const retryText = await retry.text()
+        throw new Error(retryText || `HTTP ${retry.status}`)
+      } catch {
+        useAuthStore.getState().clearUser()
+        throw new Error('Session expired. Please log in again.')
+      }
+    }
+    useAuthStore.getState().clearUser()
+    throw new Error('Unauthorized')
+  }
+
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || `HTTP ${res.status}`)
@@ -30,7 +69,7 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
 async function uploadFile(file: File): Promise<string> {
   const formData = new FormData()
   formData.append('file', file)
-  const res = await fetch(`${BASE}/files/upload`, { method: 'POST', body: formData })
+  const res = await fetch(`${BASE}/files/upload`, { method: 'POST', credentials: 'include', body: formData })
   if (!res.ok) throw new Error(`Upload failed: HTTP ${res.status}`)
   const { path } = await res.json() as { path: string }
   return path
@@ -155,7 +194,7 @@ export class WebPlatform implements IPlatform {
   }
 
   onRunProgress(callback: (data: RunProgressEvent) => void): () => void {
-    const es = new EventSource(`${BASE}/run/progress`)
+    const es = new EventSource(`${BASE}/run/progress`, { withCredentials: true })
     es.onmessage = (e) => {
       try { callback(JSON.parse(e.data as string) as RunProgressEvent) } catch { /* ignore */ }
     }

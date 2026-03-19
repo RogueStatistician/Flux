@@ -4,6 +4,7 @@
 import { platform } from '@/platform/index'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useAppStore } from '../../store/index.js'
+import { useAuthStore } from '../../store/auth.js'
 import type { WorkspaceSection } from '../../types/index.js'
 import { SourcesView } from '../workspace/SourcesView/index.js'
 import { TargetsView } from '../workspace/TargetsView/index.js'
@@ -149,7 +150,14 @@ export function ProjectWorkspace() {
   const setSection   = useAppStore(s => s.setWorkspaceSection)
   const closeProject = useAppStore(s => s.closeProject)
 
+  const clearUser = useAuthStore(s => s.clearUser)
+
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  const handleLogout = useCallback(async () => {
+    await fetch('/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {})
+    clearUser()
+  }, [clearUser])
 
   const handleClose = useCallback(async () => {
     await platform.closeProject()
@@ -211,6 +219,12 @@ export function ProjectWorkspace() {
               className="w-full text-left text-xs text-red-900 hover:text-red-400 transition-colors py-1"
             >
               Delete project…
+            </button>
+            <button
+              onClick={handleLogout}
+              className="w-full text-left text-xs text-gray-600 hover:text-gray-300 transition-colors py-1 mt-1 border-t border-gray-800 pt-2"
+            >
+              Sign out
             </button>
           </div>
         )}
