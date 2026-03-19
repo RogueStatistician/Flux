@@ -12,6 +12,8 @@ export default defineConfig({
     proxy: {
       '/api':  'http://localhost:3001',
       '/auth': 'http://localhost:3001',
+      // /invite/* is handled client-side by React Router (InvitePage);
+      // no proxy needed — Vite dev server serves index.html for it.
     },
   },
   resolve: {
@@ -22,5 +24,9 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    // Ensure asset URLs are absolute (/assets/...) so deep routes like
+    // /invite/:token don't resolve them relative to their own path segment.
+    assetsDir: 'assets',
   },
+  base: '/',
 })
