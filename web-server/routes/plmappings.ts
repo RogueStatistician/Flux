@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { withUser } from '../../core/db.js'
 import {
   createPlMapping, listPlMappings, getPlMapping, updatePlMapping, deletePlMapping,
   setPlMappingEntries, importPlMappingEntriesFromFile, bulkImportPlMappingsFromFile,
@@ -7,8 +8,10 @@ import {
 export const router = Router()
 
 const wrap = (fn: (body: Record<string, unknown>) => unknown) => async (req: import('express').Request, res: import('express').Response) => {
-  try { res.json(await fn(req.body as Record<string, unknown>)) }
-  catch (e) { res.status(500).send(e instanceof Error ? e.message : String(e)) }
+  try {
+    const result = await withUser(req.user!.sub, () => fn(req.body as Record<string, unknown>))
+    res.json(result)
+  } catch (e) { res.status(500).send(e instanceof Error ? e.message : String(e)) }
 }
 
 router.post('/plmappings/create', wrap(({ name, sourcePicklistId, targetPicklistId }) => createPlMapping(name as string, sourcePicklistId as string | undefined, targetPicklistId as string | undefined)))

@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { withUser } from '../../core/db.js'
 import {
   createTransformation, listTransformations, getTransformation, updateTransformation,
   saveCanvas, deleteTransformation, duplicateTransformation,
@@ -10,8 +11,10 @@ import {
 export const router = Router()
 
 const wrap = (fn: (body: Record<string, unknown>) => unknown) => async (req: import('express').Request, res: import('express').Response) => {
-  try { res.json(await fn(req.body as Record<string, unknown>)) }
-  catch (e) { res.status(500).send(e instanceof Error ? e.message : String(e)) }
+  try {
+    const result = await withUser(req.user!.sub, () => fn(req.body as Record<string, unknown>))
+    res.json(result)
+  } catch (e) { res.status(500).send(e instanceof Error ? e.message : String(e)) }
 }
 
 router.post('/transformations/create', wrap(({ name, description }) => createTransformation(name as string, description as string | undefined)))

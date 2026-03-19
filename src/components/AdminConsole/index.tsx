@@ -26,11 +26,17 @@ interface InviteToken {
 }
 
 interface ProjectFile {
+  projectUuid: string
   filePath: string
   fileName: string
+  ownerUsername: string
+  ownerId: string
   sizeBytes: number
   modifiedAt: string
-  isOpen: boolean
+  exists: boolean
+  isLocked: boolean
+  lockedBy: string | null
+  lockedAt: string | null
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -429,7 +435,7 @@ function ProjectsTab() {
   const [projects, setProjects] = useState<ProjectFile[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [deletingPath, setDeletingPath] = useState<string | null>(null)
+  const [deletingUuid, setDeletingUuid] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -448,31 +454,37 @@ function ProjectsTab() {
   useEffect(() => { load() }, [load])
 
   const handleDelete = async (project: ProjectFile) => {
-    const warning = project.isOpen
-      ? `"${project.fileName}" is currently open and will be closed before deletion. Delete it?`
-      : `Delete "${project.fileName}"? This cannot be undone.`
-    if (!confirm(warning)) return
+    const lockWarning = project.isLocked ? ` It is currently locked by ${project.lockedBy} and will be force-released.` : ''
+    if (!confirm(`Delete "${project.fileName}"?${lockWarning} This cannot be undone.`)) return
 
-    setDeletingPath(project.filePath)
+    setDeletingUuid(project.projectUuid)
     setError(null)
     try {
       const res = await fetch('/api/admin/projects', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ filePath: project.filePath }),
+        body: JSON.stringify({ projectUuid: project.projectUuid }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as Record<string, string>
         setError(data.message ?? 'Delete failed.')
         return
       }
-      setProjects(prev => prev.filter(p => p.filePath !== project.filePath))
+      setProjects(prev => prev.filter(p => p.projectUuid !== project.projectUuid))
     } catch {
       setError('Connection error.')
     } finally {
-      setDeletingPath(null)
+      setDeletingUuid(null)
     }
+  }
+
+  const handleDownload = (project: ProjectFile) => {
+    const url = `/api/admin/projects/download?filePath=${encodeURIComponent(project.filePath)}`
+    const a = document.createElement('a')
+    a.href = url
+    a.download = project.fileName
+    a.click()
   }
 
   if (loading) {
@@ -494,7 +506,7 @@ function ProjectsTab() {
 
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-semibold text-gray-700">
-          Project files ({projects.length})
+          Projects ({projects.length})
         </h2>
         <button
           onClick={load}
@@ -506,42 +518,67 @@ function ProjectsTab() {
 
       {projects.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl p-8 text-center shadow-sm">
-          <p className="text-sm text-gray-400">No .flux files found in the projects directory.</p>
+          <p className="text-sm text-gray-400">No projects registered yet.</p>
         </div>
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
           {projects.map((project, i) => (
             <div
-              key={project.filePath}
-              className={`flex items-center gap-3 px-4 py-3 ${i > 0 ? 'border-t border-gray-100' : ''} ${
-                deletingPath === project.filePath ? 'opacity-50' : ''
-              }`}
+              key={project.projectUuid}
+              className={`group flex items-center gap-3 px-4 py-3 ${i > 0 ? 'border-t border-gray-100' : ''} ${
+                deletingUuid === project.projectUuid ? 'opacity-50' : ''
+              } ${!project.exists ? 'opacity-60' : ''}`}
             >
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm font-medium text-gray-800 truncate">
-                    {project.fileName}
+                    {project.fileName.replace(/\.flux$/, '')}
                   </span>
-                  {project.isOpen && (
-                    <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium shrink-0">
-                      open
+                  {/* Owner badge */}
+                  <span className="text-xs text-gray-400 shrink-0">
+                    by {project.ownerUsername}
+                  </span>
+                  {/* Lock badge */}
+                  {project.isLocked && (
+                    <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-medium shrink-0">
+                      locked by {project.lockedBy}
+                    </span>
+                  )}
+                  {/* Missing file badge */}
+                  {!project.exists && (
+                    <span className="text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-medium shrink-0">
+                      file missing
                     </span>
                   )}
                 </div>
                 <p className="text-xs text-gray-400 font-mono truncate mt-0.5">
                   {project.filePath}
                 </p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {formatBytes(project.sizeBytes)} · Modified {formatDate(project.modifiedAt)}
-                </p>
+                {project.exists && (
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {formatBytes(project.sizeBytes)} · Modified {formatDate(project.modifiedAt)}
+                  </p>
+                )}
               </div>
-              <button
-                onClick={() => handleDelete(project)}
-                disabled={deletingPath === project.filePath}
-                className="text-xs text-red-300 hover:text-red-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded hover:bg-red-50 shrink-0"
-              >
-                Delete
-              </button>
+
+              <div className="flex items-center gap-1 shrink-0">
+                {project.exists && (
+                  <button
+                    onClick={() => handleDownload(project)}
+                    title="Download .flux file"
+                    className="text-xs text-gray-300 hover:text-blue-500 transition-colors px-2 py-1 rounded hover:bg-blue-50 opacity-0 group-hover:opacity-100"
+                  >
+                    ↓
+                  </button>
+                )}
+                <button
+                  onClick={() => handleDelete(project)}
+                  disabled={deletingUuid === project.projectUuid}
+                  className="text-xs text-red-300 hover:text-red-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded hover:bg-red-50"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           ))}
         </div>

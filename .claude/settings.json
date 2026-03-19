@@ -16,7 +16,27 @@
       "Bash(ls /home/simone/code/Flux/node_modules/better-sqlite3/build/Release/*.node)",
       "Bash(node -e \":*)",
       "Bash(kill 2661)",
-      "Bash(head -20 grep -rn platform /home/simone/code/Flux/src/components/workspace/MappingEditorOverlay* --include=*.tsx)"
+      "Bash(head -20 grep -rn platform /home/simone/code/Flux/src/components/workspace/MappingEditorOverlay* --include=*.tsx)",
+      "Bash(npm test:*)",
+      "Bash(grep -r \"noUnusedLocals\\\\|noUnusedParameters\" /home/simone/code/Flux/tsconfig*.json)",
+      "Bash(grep -n style= /home/simone/code/Flux/src/components/workspace/TransformationEditor/nodes/*.tsx)",
+      "Bash(wc -l /home/simone/code/Flux/tests/**/*.test.ts)",
+      "Bash(grep -n \"validate\\\\|test.*field.*name\" /home/simone/code/Flux/src/components/workspace/ImportWizard/*.tsx)",
+      "Bash(grep -n \"broadcast\\\\|SSE\\\\|all clients\" /home/simone/code/Flux/web-server/*.ts)",
+      "Bash(grep -r \"console\\\\.\\(log\\\\|debug\\\\|warn\\)\" /home/simone/code/Flux/src/platform/*.ts)",
+      "Bash(grep -n \"/@xyflow\\\\|type coercion\\\\|as unknown as\" /home/simone/code/Flux/src/components/workspace/TransformationEditor/nodes/*.tsx)",
+      "Bash(grep -n \"auth\\\\|token\\\\|password\\\\|authenticate\" /home/simone/code/Flux/web-server/server.ts /home/simone/code/Flux/web-server/routes/*.ts)",
+      "Bash(grep -n \"cancelled.*status\\\\|cancel.*Run\\\\|RunStatus.*cancel\" /home/simone/code/Flux/src/types/index.ts /home/simone/code/Flux/core/*.ts)",
+      "Bash(grep -n \"duplicate.*node\\\\|Join.*Filter.*Append\\\\|helper.*function\" /home/simone/code/Flux/src/components/workspace/TransformationEditor/nodes/*.tsx)",
+      "Bash(wc -l /home/simone/code/Flux/src/components/workspace/TransformationEditor/nodes/*.tsx)",
+      "Bash(grep -n \"TODO\\\\|FIXME\\\\|XXX\\\\|HACK\" /home/simone/code/Flux/src --include=*.tsx -r)",
+      "Bash(node -e \"require\\(''''/home/simone/code/Flux/node_modules/better-sqlite3''''\\)\")",
+      "Bash(npx node-pre-gyp:*)",
+      "Bash(npm rebuild:*)",
+      "Bash(npm run:*)",
+      "Bash(ls -la /home/simone/code/Flux/tsconfig*.json)",
+      "Bash(grep -r \"middleware\\\\|auth\\\\|passport\\\\|jwt\" /home/simone/code/Flux/web-server --include=*.ts --include=*.js)",
+      "Bash(git add:*)"
     ]
   }
 }

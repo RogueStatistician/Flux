@@ -1,12 +1,133 @@
 /**
- * Database layer — opens/closes a SQLite .flux project file and runs migrations.
+ * Database layer — opens/closes SQLite .flux project files and runs migrations.
  *
- * All access to better-sqlite3 stays in the Node.js process.
- * The renderer communicates via typed IPC handlers in electron/ipc/.
+ * Two operational modes (both can coexist):
+ *
+ * 1. **Electron / legacy** — single global `_db` singleton, accessed via
+ *    `openDatabase(filePath)` / `closeDatabase()` / `getDb()`.
+ *
+ * 2. **Web / multi-user** — per-user connection map, accessed via
+ *    `openDatabase(userId, filePath)` / `closeDatabase(userId)`.
+ *    Service functions automatically use the right connection via
+ *    `withUser(userId, fn)` + `AsyncLocalStorage` — no signature changes
+ *    to any service function needed.
  */
 import Database from 'better-sqlite3'
+import { AsyncLocalStorage } from 'node:async_hooks'
 
+// ── Connection storage ────────────────────────────────────────────────────────
+
+/** Electron singleton (legacy path — no userId). */
 let _db: Database.Database | null = null
+
+/** Web per-user connections, keyed by userId. */
+const _connections = new Map<string, Database.Database>()
+
+/** AsyncLocalStorage tracks which userId is active for the current request. */
+const _currentUserId = new AsyncLocalStorage<string>()
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Open (or replace) a .flux file for a specific user (web mode).
+ * Call with a single argument for Electron legacy mode.
+ */
+export function openDatabase(userIdOrPath: string, filePath?: string): void {
+  if (filePath !== undefined) {
+    // Web mode: openDatabase(userId, filePath)
+    const existing = _connections.get(userIdOrPath)
+    if (existing) { try { existing.close() } catch { /* ignore */ } }
+    const db = new Database(filePath)
+    db.pragma('journal_mode = WAL')
+    db.pragma('foreign_keys = ON')
+    applyMigrations(db)
+    _connections.set(userIdOrPath, db)
+  } else {
+    // Electron legacy mode: openDatabase(filePath)
+    if (_db) { try { _db.close() } catch { /* ignore */ } }
+    _db = new Database(userIdOrPath)
+    _db.pragma('journal_mode = WAL')
+    _db.pragma('foreign_keys = ON')
+    applyMigrations(_db)
+  }
+}
+
+/**
+ * Close the database for a specific user (web mode), or the global singleton
+ * when called with no arguments (Electron legacy mode).
+ */
+export function closeDatabase(userId?: string): void {
+  if (userId !== undefined) {
+    const db = _connections.get(userId)
+    if (db) { try { db.close() } catch { /* ignore */ } }
+    _connections.delete(userId)
+  } else {
+    if (_db) { try { _db.close() } catch { /* ignore */ } }
+    _db = null
+  }
+}
+
+/**
+ * Return the active database.
+ * - Inside a `withUser()` call: returns the per-user connection.
+ * - Outside (Electron IPC path): returns the global singleton.
+ */
+export function getDb(): Database.Database {
+  const userId = _currentUserId.getStore()
+  if (userId !== undefined) {
+    const db = _connections.get(userId)
+    if (!db) throw new Error(`No project is open for user ${userId}.`)
+    return db
+  }
+  if (!_db) throw new Error('No project is open.')
+  return _db
+}
+
+/**
+ * True when a project is open for the given user (web), or globally (Electron).
+ */
+export function isDatabaseOpen(userId?: string): boolean {
+  if (userId !== undefined) return _connections.has(userId)
+  const uid = _currentUserId.getStore()
+  if (uid !== undefined) return _connections.has(uid)
+  return _db !== null
+}
+
+/**
+ * Run `fn` in a context where `getDb()` automatically returns this user's
+ * connection. Used by Express route handlers to scope all service-function
+ * calls to the right SQLite connection without changing service signatures.
+ *
+ * @example
+ * router.get('/objects', (req, res) => {
+ *   withUser(req.user!.sub, () => {
+ *     res.json(listObjects())
+ *   })
+ * })
+ */
+export function withUser<T>(userId: string, fn: () => T): T {
+  return _currentUserId.run(userId, fn)
+}
+
+/**
+ * Returns the file path for a user's currently open project, or null.
+ * Opens a read-only connection to query the filename if needed.
+ */
+export function getCurrentFilePath(userId: string): string | null {
+  const db = _connections.get(userId)
+  if (!db) return null
+  // better-sqlite3 exposes the filename on the Database object
+  return (db as unknown as { name: string }).name ?? null
+}
+
+/** Return all currently open user sessions (userId → filePath). */
+export function getAllOpenSessions(): Map<string, string> {
+  const result = new Map<string, string>()
+  for (const [userId, db] of _connections) {
+    result.set(userId, (db as unknown as { name: string }).name ?? '')
+  }
+  return result
+}
 
 // ── Schema DDL ────────────────────────────────────────────────────────────────
 
@@ -139,11 +260,6 @@ ALTER TABLE object_fields ADD COLUMN description TEXT;
 
 /**
  * Migration v2 → v3: adds Workday-style template layout fields to data_objects.
- *
- * template_header_row  — 0-based index of the row that contains column names.
- * template_skip_columns — number of leading columns to ignore when reading/writing data.
- * template_file_path   — absolute path to the original uploaded template file, used by
- *                        the engine to preserve the template structure on output.
  */
 const MIGRATION_V3 = `
 ALTER TABLE data_objects ADD COLUMN template_header_row    INTEGER DEFAULT 0;
@@ -153,12 +269,6 @@ ALTER TABLE data_objects ADD COLUMN template_file_path     TEXT;
 
 /**
  * Migration v3 → v4: decouples "where column names live" from "where data starts".
- *
- * template_data_start_row — 0-based index of the first row that should contain
- *                           transformed data in the output file.  When NULL the
- *                           engine falls back to template_header_row + 1, which
- *                           preserves the behaviour of databases created before
- *                           this migration.
  */
 const MIGRATION_V4 = `
 ALTER TABLE data_objects ADD COLUMN template_data_start_row INTEGER DEFAULT NULL;
@@ -166,56 +276,15 @@ ALTER TABLE data_objects ADD COLUMN template_data_start_row INTEGER DEFAULT NULL
 
 /**
  * Migration v4 → v5: supports multiple MapNodes per target object.
- *
- * map_node_id — canvas node ID of the map-operator node that owns this rule.
- *               NULL for legacy single-MapNode transformations (backward-compatible).
- *               When set, rules are scoped to a specific MapNode so two
- *               independent mapping paths can target the same output object
- *               with different source fields.
  */
 const MIGRATION_V5 = `
 ALTER TABLE field_mappings ADD COLUMN map_node_id TEXT;
 CREATE INDEX idx_field_mappings_node ON field_mappings(map_node_id);
 `
 
-/**
- * Open (or create) a .flux SQLite file and run any pending migrations.
- * Throws if the file path is invalid or the DB is not a valid Flux project.
- */
-export function openDatabase(filePath: string): void {
-  if (_db) {
-    _db.close()
-    _db = null
-  }
-  _db = new Database(filePath)
-  _db.pragma('journal_mode = WAL')
-  _db.pragma('foreign_keys = ON')
-  applyMigrations(_db)
-}
-
-/** Close the current database. Safe to call when no DB is open. */
-export function closeDatabase(): void {
-  if (_db) {
-    _db.close()
-    _db = null
-  }
-}
-
-/** Return the open database. Throws if no project is open. */
-export function getDb(): Database.Database {
-  if (!_db) throw new Error('No project is open.')
-  return _db
-}
-
-/** True when a project file is currently open. */
-export function isDatabaseOpen(): boolean {
-  return _db !== null
-}
-
 // ── Migrations ────────────────────────────────────────────────────────────────
 
 function applyMigrations(db: Database.Database): void {
-  // Ensure the _meta table exists
   db.exec(`
     CREATE TABLE IF NOT EXISTS _meta (
       key   TEXT PRIMARY KEY,
@@ -231,27 +300,20 @@ function applyMigrations(db: Database.Database): void {
 
   if (currentVersion < 1) {
     db.exec(MIGRATION_V1)
-    db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run(
-      'schema_version',
-      '1'
-    )
+    db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '1')
   }
-
   if (currentVersion < 2) {
     db.exec(MIGRATION_V2)
     db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '2')
   }
-
   if (currentVersion < 3) {
     db.exec(MIGRATION_V3)
     db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '3')
   }
-
   if (currentVersion < 4) {
     db.exec(MIGRATION_V4)
     db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '4')
   }
-
   if (currentVersion < 5) {
     db.exec(MIGRATION_V5)
     db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '5')

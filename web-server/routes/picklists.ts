@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { withUser } from '../../core/db.js'
 import {
   createPicklist, listPicklists, getPicklist, updatePicklist, deletePicklist,
   setPicklistValues, importPicklistFromFile, bulkImportPicklistsFromFile,
@@ -7,8 +8,10 @@ import {
 export const router = Router()
 
 const wrap = (fn: (body: Record<string, unknown>) => unknown) => async (req: import('express').Request, res: import('express').Response) => {
-  try { res.json(await fn(req.body as Record<string, unknown>)) }
-  catch (e) { res.status(500).send(e instanceof Error ? e.message : String(e)) }
+  try {
+    const result = await withUser(req.user!.sub, () => fn(req.body as Record<string, unknown>))
+    res.json(result)
+  } catch (e) { res.status(500).send(e instanceof Error ? e.message : String(e)) }
 }
 
 router.post('/picklists/create', wrap(({ side, name, description }) => createPicklist(side as 'source' | 'target', name as string, description as string | undefined)))

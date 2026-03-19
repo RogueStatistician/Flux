@@ -43,18 +43,6 @@ export function createProjectRecord(name: string, description?: string, client?:
   return { id, name, description: description ?? null, client: client ?? null, created_at: now, updated_at: now }
 }
 
-export function openProjectRecord(filePath: string) {
-  openDatabase(filePath)
-  const db = getDb()
-  const row = db.prepare('SELECT * FROM projects LIMIT 1').get() as ProjectRow | undefined
-  if (!row) throw new Error('Invalid .flux file: no project record found.')
-  return rowToMeta(row, filePath)
-}
-
-export function closeProjectRecord() {
-  closeDatabase()
-}
-
 export function updateProjectRecord(filePath: string, fields: Partial<{ name: string; description: string; client: string }>) {
   const db = getDb()
   const now = new Date().toISOString()
@@ -94,12 +82,29 @@ export function addToRecents(recentsFilePath: string, filePath: string, name: st
 }
 
 export function removeFromRecents(recentsFilePath: string, filePath: string): void {
-  const recents = loadRecents(recentsFilePath).filter(r => r.filePath !== filePath)
-  fs.writeFileSync(recentsFilePath, JSON.stringify(recents, null, 2), 'utf-8')
+  try {
+    const recents = loadRecents(recentsFilePath).filter(r => r.filePath !== filePath)
+    fs.writeFileSync(recentsFilePath, JSON.stringify(recents, null, 2), 'utf-8')
+  } catch { /* ignore if file missing */ }
 }
 
 export function deleteProjectFile(recentsFilePath: string, filePath: string): void {
   closeDatabase()
   removeFromRecents(recentsFilePath, filePath)
   fs.unlinkSync(filePath)
+}
+
+// ── Electron-only helpers (use the global _db singleton) ─────────────────────
+
+/** Open a project in Electron mode. Uses the legacy global DB singleton. */
+export function openProjectRecord(filePath: string) {
+  openDatabase(filePath)   // Electron legacy: single arg = global singleton
+  const db = getDb()
+  const row = db.prepare('SELECT * FROM projects LIMIT 1').get() as ProjectRow | undefined
+  if (!row) throw new Error('Invalid .flux file: no project record found.')
+  return rowToMeta(row, filePath)
+}
+
+export function closeProjectRecord() {
+  closeDatabase()
 }

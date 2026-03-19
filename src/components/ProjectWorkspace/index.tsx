@@ -225,6 +225,106 @@ function ChangePasswordPanel({ onCancel }: { onCancel: () => void }) {
   )
 }
 
+// ── Share panel ───────────────────────────────────────────────────────────────
+
+interface Member { userId: string; username: string; role: string }
+interface UserOption { id: string; username: string }
+
+function SharePanel({ onClose }: { onClose: () => void }) {
+  const [members,  setMembers]  = useState<Member[]>([])
+  const [users,    setUsers]    = useState<UserOption[]>([])
+  const [selected, setSelected] = useState('')
+  const [role,     setRole]     = useState<'editor' | 'viewer'>('editor')
+  const [busy,     setBusy]     = useState(false)
+  const [error,    setError]    = useState<string | null>(null)
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/project/members', { credentials: 'include' }).then(r => r.json()),
+      fetch('/api/project/users',   { credentials: 'include' }).then(r => r.json()),
+    ]).then(([m, u]) => { setMembers(m as Member[]); setUsers(u as UserOption[]) }).catch(() => {})
+  }, [])
+
+  const handleShare = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selected) return
+    setBusy(true); setError(null)
+    try {
+      const res = await fetch('/api/project/share', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ userId: selected, role }),
+      })
+      if (!res.ok) { const d = await res.json().catch(() => ({})) as Record<string, string>; setError(d.message ?? 'Share failed.'); return }
+      setMembers(await res.json()); setSelected('')
+    } catch { setError('Connection error.') } finally { setBusy(false) }
+  }
+
+  const handleRevoke = async (targetId: string) => {
+    try {
+      const res = await fetch(`/api/project/share/${targetId}`, { method: 'DELETE', credentials: 'include' })
+      if (res.ok) setMembers(await res.json())
+    } catch { /* ignore */ }
+  }
+
+  const nonOwnerMembers = members.filter(m => m.role !== 'owner')
+  const availableUsers  = users.filter(u => !members.some(m => m.userId === u.id))
+
+  return (
+    <div className="p-3 border-t border-gray-700 bg-gray-950">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs text-gray-300 font-medium">Share project</p>
+        <button onClick={onClose} className="text-gray-600 hover:text-gray-400 text-xs">✕</button>
+      </div>
+      {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
+
+      {/* Current members */}
+      {nonOwnerMembers.length > 0 && (
+        <div className="mb-2 space-y-1">
+          {nonOwnerMembers.map(m => (
+            <div key={m.userId} className="flex items-center justify-between">
+              <span className="text-xs text-gray-400">{m.username}
+                <span className="ml-1 text-gray-600">({m.role})</span>
+              </span>
+              <button onClick={() => handleRevoke(m.userId)} className="text-xs text-red-900 hover:text-red-400 transition-colors">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add user form */}
+      {availableUsers.length > 0 ? (
+        <form onSubmit={handleShare} className="space-y-2">
+          <select
+            value={selected}
+            onChange={e => setSelected(e.target.value)}
+            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+          >
+            <option value="">Select user…</option>
+            {availableUsers.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+          </select>
+          <div className="flex gap-1">
+            {(['editor', 'viewer'] as const).map(r => (
+              <label key={r} className="flex items-center gap-1 cursor-pointer">
+                <input type="radio" name="role" value={r} checked={role === r} onChange={() => setRole(r)} className="accent-blue-500" />
+                <span className="text-xs text-gray-400">{r}</span>
+              </label>
+            ))}
+          </div>
+          <button
+            type="submit" disabled={busy || !selected}
+            className="w-full text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white rounded py-1 transition-colors"
+          >
+            {busy ? '…' : 'Share'}
+          </button>
+        </form>
+      ) : (
+        <p className="text-xs text-gray-600">All users already have access.</p>
+      )}
+    </div>
+  )
+}
+
 // ── Workspace ─────────────────────────────────────────────────────────────────
 
 export function ProjectWorkspace() {
@@ -239,6 +339,7 @@ export function ProjectWorkspace() {
 
   const [showDeleteConfirm,  setShowDeleteConfirm]  = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
+  const [showShare,          setShowShare]          = useState(false)
 
   const handleLogout = useCallback(async () => {
     await fetch('/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {})
@@ -294,6 +395,8 @@ export function ProjectWorkspace() {
           <DeleteProjectPanel onCancel={() => setShowDeleteConfirm(false)} />
         ) : showChangePassword ? (
           <ChangePasswordPanel onCancel={() => setShowChangePassword(false)} />
+        ) : showShare ? (
+          <SharePanel onClose={() => setShowShare(false)} />
         ) : (
           <div className="p-3 border-t border-gray-700 flex flex-col gap-1">
             <button
@@ -302,6 +405,27 @@ export function ProjectWorkspace() {
             >
               ← Close project
             </button>
+            {!isElectron && (
+              <>
+                <button
+                  onClick={() => {
+                    const a = document.createElement('a')
+                    a.href = '/api/project/download'
+                    a.download = (project?.name ?? 'project') + '.flux'
+                    a.click()
+                  }}
+                  className="w-full text-left text-xs text-gray-500 hover:text-gray-200 transition-colors py-1"
+                >
+                  ↓ Download .flux
+                </button>
+                <button
+                  onClick={() => setShowShare(true)}
+                  className="w-full text-left text-xs text-gray-500 hover:text-gray-200 transition-colors py-1"
+                >
+                  Share project…
+                </button>
+              </>
+            )}
             <button
               onClick={() => setShowDeleteConfirm(true)}
               className="w-full text-left text-xs text-red-900 hover:text-red-400 transition-colors py-1"

@@ -43,6 +43,27 @@ CREATE TABLE IF NOT EXISTS invite_tokens (
 );
 `
 
+const MIGRATION_V3 = `
+CREATE TABLE IF NOT EXISTS project_registry (
+  project_uuid  TEXT PRIMARY KEY,
+  file_path     TEXT NOT NULL,
+  owner_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  registered_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_access (
+  project_uuid  TEXT NOT NULL REFERENCES project_registry(project_uuid) ON DELETE CASCADE,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role          TEXT NOT NULL DEFAULT 'editor'
+                CHECK(role IN ('editor', 'viewer')),
+  granted_by    TEXT NOT NULL REFERENCES users(id),
+  granted_at    TEXT NOT NULL,
+  PRIMARY KEY (project_uuid, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_access_user ON project_access(user_id);
+`
+
 function applyMigrations(db: Database.Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS _meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
 
@@ -57,6 +78,11 @@ function applyMigrations(db: Database.Database): void {
   if (currentVersion < 2) {
     db.exec(MIGRATION_V2)
     db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '2')
+  }
+
+  if (currentVersion < 3) {
+    db.exec(MIGRATION_V3)
+    db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '3')
   }
 }
 

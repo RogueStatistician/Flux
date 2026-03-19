@@ -7,9 +7,9 @@ import { WebPlatform } from './WebPlatform.js'
 import type { IPlatform } from './IPlatform.js'
 
 const isElectron = typeof window !== 'undefined' && 'electronAPI' in window
-console.log(isElectron)
-export const platform: IPlatform = /*isElectron
+
+export const platform: IPlatform = isElectron
   ? new ElectronPlatform()
-  :*/ new WebPlatform()
-console.log(platform)
-export type { IPlatform, RunProgressEvent } from './IPlatform.js'
+  : new WebPlatform()
+
+  export type { IPlatform, RunProgressEvent } from './IPlatform.js'
