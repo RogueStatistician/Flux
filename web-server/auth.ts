@@ -23,11 +23,19 @@ import {
   getUserById,
   listUsers,
   deleteUser,
+  countAdmins,
+  updateUserRole,
+  updateUserPassword,
   createRefreshToken,
   rotateRefreshToken,
   deleteRefreshToken,
   wipeUserRefreshTokens,
   lookupRefreshToken,
+  createInviteToken,
+  listInviteTokens,
+  validateInviteToken,
+  consumeInviteToken,
+  deleteInviteToken,
 } from '../core/services/users.js'
 import { authMiddleware, requireAdmin, softAuth, ACCESS_SECRET } from './middleware/auth.js'
 
@@ -89,14 +97,17 @@ function refreshTokenExpiresAt(): string {
 
 // ── Rate limiters ──────────────────────────────────────────────────────────────
 
-const loginLimiter    = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false })
-const refreshLimiter  = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false })
-const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max:  5, standardHeaders: true, legacyHeaders: false })
+const loginLimiter       = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false })
+const refreshLimiter     = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false })
+const registerLimiter    = rateLimit({ windowMs: 60 * 60 * 1000, max:  5, standardHeaders: true, legacyHeaders: false })
+const acceptInviteLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false })
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
-const LoginSchema    = z.object({ username: z.string().min(1).max(128), password: z.string().min(1).max(1024) })
-const RegisterSchema = z.object({ username: z.string().min(1).max(128), password: z.string().min(8).max(1024) })
+const LoginSchema         = z.object({ username: z.string().min(1).max(128), password: z.string().min(1).max(1024) })
+const RegisterSchema      = z.object({ username: z.string().min(1).max(128), password: z.string().min(8).max(1024) })
+const ChangePasswordSchema = z.object({ currentPassword: z.string().min(1).max(1024), newPassword: z.string().min(8).max(1024) })
+const AcceptInviteSchema  = z.object({ token: z.string().min(1), username: z.string().min(1).max(128), password: z.string().min(8).max(1024) })
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
@@ -264,7 +275,7 @@ router.get(
   }
 )
 
-// DELETE /auth/users/:id — delete a user (admin only, cannot delete self)
+// DELETE /auth/users/:id — delete a user (admin only, cannot delete self, cannot delete last admin)
 router.delete(
   '/users/:id',
   authMiddleware as import('express').RequestHandler,
@@ -275,7 +286,153 @@ router.delete(
       res.status(400).json({ code: 'CANNOT_DELETE_SELF' })
       return
     }
+    const target = getUserById(targetId)
+    if (target?.role === 'admin' && countAdmins() <= 1) {
+      res.status(400).json({ code: 'LAST_ADMIN', message: 'Cannot delete the last admin account.' })
+      return
+    }
     deleteUser(targetId)
     res.json({})
   }
 )
+
+// PATCH /auth/users/:id/role — change role (admin only, last-admin protected)
+router.patch(
+  '/users/:id/role',
+  authMiddleware as import('express').RequestHandler,
+  requireAdmin as import('express').RequestHandler,
+  (req, res) => {
+    const targetId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id
+    const { role } = req.body as { role?: unknown }
+    if (role !== 'admin' && role !== 'user') {
+      res.status(400).json({ code: 'INVALID_REQUEST' }); return
+    }
+    try {
+      const updated = updateUserRole(targetId, role)
+      if (!updated) { res.status(404).json({ code: 'NOT_FOUND' }); return }
+      res.json({ id: updated.id, username: updated.username, role: updated.role })
+    } catch (e) {
+      if (e instanceof Error && e.message === 'LAST_ADMIN') {
+        res.status(400).json({ code: 'LAST_ADMIN', message: 'Cannot demote the last admin account.' })
+      } else {
+        res.status(500).json({ code: 'INTERNAL_ERROR' })
+      }
+    }
+  }
+)
+
+// PATCH /auth/users/:id/password — admin sets another user's password
+router.patch(
+  '/users/:id/password',
+  authMiddleware as import('express').RequestHandler,
+  requireAdmin as import('express').RequestHandler,
+  async (req, res) => {
+    const targetId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id
+    const { newPassword } = req.body as { newPassword?: unknown }
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      res.status(400).json({ code: 'INVALID_REQUEST', message: 'newPassword must be at least 8 characters.' })
+      return
+    }
+    const target = getUserById(targetId)
+    if (!target) { res.status(404).json({ code: 'NOT_FOUND' }); return }
+    await updateUserPassword(targetId, newPassword)
+    res.json({})
+  }
+)
+
+// POST /auth/change-password — change own password (any authenticated user)
+router.post('/change-password', authMiddleware as import('express').RequestHandler, async (req, res) => {
+  const parsed = ChangePasswordSchema.safeParse(req.body)
+  if (!parsed.success) { res.status(400).json({ code: 'INVALID_REQUEST' }); return }
+
+  const { currentPassword, newPassword } = parsed.data
+  const user = await verifyPassword(req.user!.username, currentPassword)
+  if (!user) {
+    res.status(401).json({ code: 'INVALID_CREDENTIALS', message: 'Current password is incorrect.' })
+    return
+  }
+
+  await updateUserPassword(req.user!.sub, newPassword)
+  // Wipe all refresh tokens so other sessions are invalidated after password change
+  wipeUserRefreshTokens(req.user!.sub)
+  clearTokenCookies(res)
+  res.json({ message: 'Password changed. Please log in again.' })
+})
+
+// ── Invite tokens ─────────────────────────────────────────────────────────────
+
+// POST /auth/invites — create an invite link (admin only)
+router.post(
+  '/invites',
+  authMiddleware as import('express').RequestHandler,
+  requireAdmin as import('express').RequestHandler,
+  (req, res) => {
+    const role = (req.body as { role?: unknown }).role === 'admin' ? 'admin' : 'user'
+    const invite = createInviteToken(req.user!.sub, role)
+    const origin = `${req.protocol}://${req.get('host')}`
+    res.status(201).json({ ...invite, inviteUrl: `${origin}/invite/${invite.token}` })
+  }
+)
+
+// GET /auth/invites — list pending invites (admin only)
+router.get(
+  '/invites',
+  authMiddleware as import('express').RequestHandler,
+  requireAdmin as import('express').RequestHandler,
+  (_req, res) => { res.json(listInviteTokens()) }
+)
+
+// DELETE /auth/invites/:token — revoke an invite (admin only)
+router.delete(
+  '/invites/:token',
+  authMiddleware as import('express').RequestHandler,
+  requireAdmin as import('express').RequestHandler,
+  (req, res) => {
+    const token = Array.isArray(req.params.token) ? req.params.token[0] : req.params.token
+    deleteInviteToken(token)
+    res.json({})
+  }
+)
+
+// GET /auth/invites/:token/validate — check if an invite is still valid (public)
+router.get('/invites/:token/validate', (req, res) => {
+  const token = Array.isArray(req.params.token) ? req.params.token[0] : req.params.token
+  const invite = validateInviteToken(token)
+  if (!invite) { res.status(404).json({ code: 'INVITE_INVALID' }); return }
+  res.json({ valid: true, role: invite.role, expiresAt: invite.expiresAt })
+})
+
+// POST /auth/accept-invite — consume invite token and create account (public, rate limited)
+router.post('/accept-invite', acceptInviteLimiter, async (req, res) => {
+  const parsed = AcceptInviteSchema.safeParse(req.body)
+  if (!parsed.success) { res.status(400).json({ code: 'INVALID_REQUEST' }); return }
+
+  const { token, username, password } = parsed.data
+
+  // Validate without consuming first — so a username conflict doesn't burn the invite
+  const invite = validateInviteToken(token)
+  if (!invite) {
+    res.status(404).json({ code: 'INVITE_INVALID', message: 'This invite link is invalid or has expired.' })
+    return
+  }
+
+  try {
+    const user = await createUser(username, password, invite.role)
+    // User created successfully — now consume the invite (single use)
+    consumeInviteToken(token)
+    const jti = crypto.randomUUID()
+    const accessToken  = signAccessToken(user)
+    const refreshToken = signRefreshToken(jti, user.id)
+    createRefreshToken(jti, user.id, refreshTokenExpiresAt())
+    setTokenCookies(res, accessToken, refreshToken)
+    res.status(201).json({ id: user.id, username: user.username, role: user.role })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : ''
+    if (msg.includes('UNIQUE constraint')) {
+      // Invite NOT consumed — user can retry with a different username
+      res.status(409).json({ code: 'USERNAME_TAKEN', message: 'That username is already taken. Please choose another.' })
+    } else {
+      res.status(500).json({ code: 'INTERNAL_ERROR' })
+    }
+  }
+})

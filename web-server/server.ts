@@ -25,6 +25,7 @@ import { router as plmappingsRouter } from './routes/plmappings.js'
 import { router as transformationsRouter } from './routes/transformations.js'
 import { router as runsRouter } from './routes/runs.js'
 import { router as filesRouter } from './routes/files.js'
+import { router as adminRouter } from './routes/admin.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -93,6 +94,7 @@ app.use('/api', plmappingsRouter)
 app.use('/api', transformationsRouter)
 app.use('/api', runsRouter)
 app.use('/api', filesRouter)
+app.use('/api', adminRouter)
 
 // Serve the built React app from dist/ (production only)
 const distDir = path.join(__dirname, '../dist')

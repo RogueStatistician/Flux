@@ -6,6 +6,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useAppStore } from '../../store/index.js'
 import { useAuthStore } from '../../store/auth.js'
 import type { WorkspaceSection } from '../../types/index.js'
+import { isElectron } from '../auth/AuthGate.js'
 import { SourcesView } from '../workspace/SourcesView/index.js'
 import { TargetsView } from '../workspace/TargetsView/index.js'
 import { PicklistsView } from '../workspace/PicklistsView/index.js'
@@ -142,17 +143,102 @@ function DeleteProjectPanel({ onCancel }: { onCancel: () => void }) {
   )
 }
 
+// ── Change password panel ─────────────────────────────────────────────────────
+
+function ChangePasswordPanel({ onCancel }: { onCancel: () => void }) {
+  const clearUser = useAuthStore(s => s.clearUser)
+  const [current, setCurrent]   = useState('')
+  const [next,    setNext]      = useState('')
+  const [busy,    setBusy]      = useState(false)
+  const [error,   setError]     = useState<string | null>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (next.length < 8) { setError('New password must be at least 8 characters.'); return }
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch('/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ currentPassword: current, newPassword: next }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as Record<string, string>
+        setError(data.code === 'INVALID_CREDENTIALS'
+          ? 'Current password is incorrect.'
+          : (data.message ?? 'Failed to update password.'))
+        return
+      }
+      // Server clears cookies — force re-login
+      clearUser()
+    } catch {
+      setError('Connection error.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="p-3 border-t border-gray-700 bg-gray-950">
+      <p className="text-xs text-gray-300 font-medium mb-2">Change password</p>
+      {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
+      <form onSubmit={handleSubmit} className="space-y-2">
+        <input
+          type="password"
+          autoComplete="current-password"
+          placeholder="Current password"
+          value={current}
+          onChange={e => setCurrent(e.target.value)}
+          required
+          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
+        />
+        <input
+          type="password"
+          autoComplete="new-password"
+          placeholder="New password (min 8)"
+          value={next}
+          onChange={e => setNext(e.target.value)}
+          required
+          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
+        />
+        <div className="flex gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="flex-1 text-xs text-gray-400 hover:text-white transition-colors py-1"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={busy}
+            className="flex-1 text-xs bg-blue-700 hover:bg-blue-600 text-white rounded py-1 transition-colors disabled:opacity-50"
+          >
+            {busy ? '…' : 'Update'}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 // ── Workspace ─────────────────────────────────────────────────────────────────
 
 export function ProjectWorkspace() {
-  const project      = useAppStore(s => s.project)
-  const section      = useAppStore(s => s.workspaceSection)
-  const setSection   = useAppStore(s => s.setWorkspaceSection)
-  const closeProject = useAppStore(s => s.closeProject)
+  const project         = useAppStore(s => s.project)
+  const section         = useAppStore(s => s.workspaceSection)
+  const setSection      = useAppStore(s => s.setWorkspaceSection)
+  const closeProject    = useAppStore(s => s.closeProject)
+  const setCurrentView  = useAppStore(s => s.setCurrentView)
 
+  const user      = useAuthStore(s => s.user)
   const clearUser = useAuthStore(s => s.clearUser)
 
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showDeleteConfirm,  setShowDeleteConfirm]  = useState(false)
+  const [showChangePassword, setShowChangePassword] = useState(false)
 
   const handleLogout = useCallback(async () => {
     await fetch('/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {})
@@ -206,6 +292,8 @@ export function ProjectWorkspace() {
         {/* Bottom actions */}
         {showDeleteConfirm ? (
           <DeleteProjectPanel onCancel={() => setShowDeleteConfirm(false)} />
+        ) : showChangePassword ? (
+          <ChangePasswordPanel onCancel={() => setShowChangePassword(false)} />
         ) : (
           <div className="p-3 border-t border-gray-700 flex flex-col gap-1">
             <button
@@ -220,9 +308,25 @@ export function ProjectWorkspace() {
             >
               Delete project…
             </button>
+            {!isElectron && (
+              <button
+                onClick={() => setShowChangePassword(true)}
+                className="w-full text-left text-xs text-gray-500 hover:text-gray-200 transition-colors py-1 mt-1 border-t border-gray-800 pt-2"
+              >
+                Change password…
+              </button>
+            )}
+            {!isElectron && user?.role === 'admin' && (
+              <button
+                onClick={() => setCurrentView('admin')}
+                className="w-full text-left text-xs text-gray-500 hover:text-gray-200 transition-colors py-1"
+              >
+                Admin Console
+              </button>
+            )}
             <button
               onClick={handleLogout}
-              className="w-full text-left text-xs text-gray-600 hover:text-gray-300 transition-colors py-1 mt-1 border-t border-gray-800 pt-2"
+              className="w-full text-left text-xs text-gray-600 hover:text-gray-300 transition-colors py-1"
             >
               Sign out
             </button>

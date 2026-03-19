@@ -15,6 +15,11 @@ const recentsFile = path.join(os.homedir(), '.flux', 'recents.json')
 
 let _currentFilePath: string | null = null
 
+/** Used by the admin router to check if a file is currently open before deleting it. */
+export function getCurrentFilePath(): string | null { return _currentFilePath }
+/** Used by the admin router to know where to scan for .flux files. */
+export function getProjectsDir(): string { return projectsDir }
+
 function ensureProjectsDir() {
   fs.mkdirSync(projectsDir, { recursive: true })
 }

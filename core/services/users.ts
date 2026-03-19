@@ -162,3 +162,128 @@ export function lookupRefreshToken(jti: string): string | null {
   ).get(jti) as { user_id: string } | undefined
   return row?.user_id ?? null
 }
+
+// ── Role management ───────────────────────────────────────────────────────────
+
+/** Count how many users have the admin role. */
+export function countAdmins(): number {
+  return (getUsersDb().prepare("SELECT COUNT(*) as c FROM users WHERE role = 'admin'").get() as { c: number }).c
+}
+
+/**
+ * Update a user's role. Rejects if the change would leave zero admins.
+ * Returns the updated UserRecord, or null if the user was not found.
+ */
+export function updateUserRole(id: string, role: 'admin' | 'user'): UserRecord | null {
+  const db = getUsersDb()
+
+  if (role === 'user') {
+    // Ensure at least one admin remains
+    const admins = countAdmins()
+    const target = db.prepare("SELECT role FROM users WHERE id = ?").get(id) as { role: string } | undefined
+    if (!target) return null
+    if (target.role === 'admin' && admins <= 1) {
+      throw new Error('LAST_ADMIN')
+    }
+  }
+
+  db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id)
+  return getUserById(id)
+}
+
+// ── Password management ───────────────────────────────────────────────────────
+
+/** Update a user's password (async bcrypt). No current-password check — caller must verify. */
+export async function updateUserPassword(id: string, newPassword: string): Promise<void> {
+  const hash = await bcrypt.hash(newPassword, BCRYPT_COST)
+  getUsersDb().prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id)
+}
+
+// ── Invite tokens ─────────────────────────────────────────────────────────────
+
+export interface InviteToken {
+  token: string
+  createdBy: string
+  role: 'admin' | 'user'
+  createdAt: string
+  expiresAt: string
+}
+
+interface InviteRow {
+  token: string
+  created_by: string
+  role: string
+  created_at: string
+  expires_at: string
+}
+
+function rowToInvite(r: InviteRow): InviteToken {
+  return {
+    token: r.token,
+    createdBy: r.created_by,
+    role: r.role as 'admin' | 'user',
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+  }
+}
+
+/** Create a new invite token valid for 7 days. Returns the token string. */
+export function createInviteToken(createdBy: string, role: 'admin' | 'user' = 'user'): InviteToken {
+  const db = getUsersDb()
+  const token = crypto.randomUUID()
+  const now = new Date().toISOString()
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+  db.prepare(
+    'INSERT INTO invite_tokens (token, created_by, role, created_at, expires_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(token, createdBy, role, now, expiresAt)
+  return rowToInvite(db.prepare('SELECT * FROM invite_tokens WHERE token = ?').get(token) as InviteRow)
+}
+
+/** List all non-expired invite tokens (for admin display). */
+export function listInviteTokens(): InviteToken[] {
+  return (
+    getUsersDb()
+      .prepare("SELECT * FROM invite_tokens WHERE expires_at > datetime('now') ORDER BY created_at DESC")
+      .all() as InviteRow[]
+  ).map(rowToInvite)
+}
+
+/**
+ * Validate an invite token. Returns the token record if valid, null if expired/not found.
+ * Does NOT consume the token.
+ */
+export function validateInviteToken(token: string): InviteToken | null {
+  const row = getUsersDb().prepare(
+    "SELECT * FROM invite_tokens WHERE token = ? AND expires_at > datetime('now')"
+  ).get(token) as InviteRow | undefined
+  return row ? rowToInvite(row) : null
+}
+
+/**
+ * Consume an invite token (single use). Returns the token record if valid, null if not.
+ * Deletes the token atomically.
+ */
+export function consumeInviteToken(token: string): InviteToken | null {
+  const db = getUsersDb()
+  let result: InviteToken | null = null
+  const tx = db.transaction(() => {
+    const row = db.prepare(
+      "SELECT * FROM invite_tokens WHERE token = ? AND expires_at > datetime('now')"
+    ).get(token) as InviteRow | undefined
+    if (!row) return
+    db.prepare('DELETE FROM invite_tokens WHERE token = ?').run(token)
+    result = rowToInvite(row)
+  })
+  tx()
+  return result
+}
+
+/** Delete (revoke) an invite token. No-op if not found. */
+export function deleteInviteToken(token: string): void {
+  getUsersDb().prepare('DELETE FROM invite_tokens WHERE token = ?').run(token)
+}
+
+/** Remove all expired invite tokens. Call periodically. */
+export function purgeExpiredInviteTokens(): void {
+  getUsersDb().prepare("DELETE FROM invite_tokens WHERE expires_at < datetime('now')").run()
+}

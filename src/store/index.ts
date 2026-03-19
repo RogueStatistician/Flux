@@ -4,6 +4,7 @@ import type { AppView, WorkspaceSection, ProjectMeta } from '../types/index.js'
 interface AppState {
   // ── UI ──────────────────────────────────────────────────────────────────────
   currentView: AppView
+  previousView: AppView
   workspaceSection: WorkspaceSection
 
   // ── Project ─────────────────────────────────────────────────────────────────
@@ -19,17 +20,20 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set) => ({
   currentView: 'home',
+  previousView: 'home',
   workspaceSection: 'sources',
   project: null,
 
-  setCurrentView: (view) => set({ currentView: view }),
+  setCurrentView: (view) =>
+    set((state) => ({ previousView: state.currentView, currentView: view })),
 
   setWorkspaceSection: (section) => set({ workspaceSection: section }),
 
-  openProject: (meta) => set({ project: meta, currentView: 'workspace' }),
+  openProject: (meta) =>
+    set((state) => ({ project: meta, previousView: state.currentView, currentView: 'workspace' })),
 
   closeProject: () =>
-    set({ project: null, currentView: 'home', workspaceSection: 'sources' }),
+    set({ project: null, currentView: 'home', previousView: 'home', workspaceSection: 'sources' }),
 
   updateProjectMeta: (fields) =>
     set((state) => ({

@@ -32,6 +32,17 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
 `
 
+const MIGRATION_V2 = `
+CREATE TABLE IF NOT EXISTS invite_tokens (
+  token       TEXT PRIMARY KEY,
+  created_by  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role        TEXT NOT NULL DEFAULT 'user'
+              CHECK(role IN ('admin', 'user')),
+  created_at  TEXT NOT NULL,
+  expires_at  TEXT NOT NULL
+);
+`
+
 function applyMigrations(db: Database.Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS _meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
 
@@ -41,6 +52,11 @@ function applyMigrations(db: Database.Database): void {
   if (currentVersion < 1) {
     db.exec(MIGRATION_V1)
     db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '1')
+  }
+
+  if (currentVersion < 2) {
+    db.exec(MIGRATION_V2)
+    db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '2')
   }
 }
 
@@ -69,9 +85,9 @@ export function getUsersDb(): Database.Database {
   return _db
 }
 
-/** Purge expired refresh tokens. Call periodically (e.g. on server startup). */
+/** Purge expired refresh tokens and invite tokens. Call on server startup. */
 export function purgeExpiredRefreshTokens(): void {
-  getUsersDb()
-    .prepare("DELETE FROM refresh_tokens WHERE expires_at < datetime('now')")
-    .run()
+  const db = getUsersDb()
+  db.prepare("DELETE FROM refresh_tokens WHERE expires_at < datetime('now')").run()
+  db.prepare("DELETE FROM invite_tokens WHERE expires_at < datetime('now')").run()
 }

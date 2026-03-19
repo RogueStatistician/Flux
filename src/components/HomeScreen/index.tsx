@@ -1,15 +1,25 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { platform } from '@/platform/index'
 import type { RecentProject } from '../../types/index.js'
 import { useAppStore } from '../../store/index.js'
+import { useAuthStore } from '../../store/auth.js'
+import { isElectron } from '../auth/AuthGate.js'
 
 export function HomeScreen() {
   const openProject = useAppStore(s => s.openProject)
+  const setCurrentView = useAppStore(s => s.setCurrentView)
+  const user = useAuthStore(s => s.user)
+  const clearUser = useAuthStore(s => s.clearUser)
 
   const [recents, setRecents] = useState<RecentProject[]>([])
   const [newName, setNewName] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const handleLogout = useCallback(async () => {
+    await fetch('/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {})
+    clearUser()
+  }, [clearUser])
 
   useEffect(() => {
     platform.listRecentProjects().then(setRecents).catch(() => setRecents([]))
@@ -63,6 +73,30 @@ export function HomeScreen() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-8">
+      {/* Top bar for web users */}
+      {!isElectron && user && (
+        <div className="absolute top-4 right-4 flex items-center gap-3">
+          <span className="text-xs text-gray-400">
+            {user.username}
+            {user.role === 'admin' && <span className="ml-1.5 text-purple-500 font-medium">admin</span>}
+          </span>
+          {user.role === 'admin' && (
+            <button
+              onClick={() => setCurrentView('admin')}
+              className="text-xs text-gray-500 hover:text-gray-800 transition-colors px-2 py-1 rounded hover:bg-gray-100"
+            >
+              Admin Console
+            </button>
+          )}
+          <button
+            onClick={handleLogout}
+            className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+
       {/* Logo */}
       <div className="mb-10 text-center">
         <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">

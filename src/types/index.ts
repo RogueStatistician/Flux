@@ -19,7 +19,7 @@ export interface RecentProject {
 
 // ── UI state ──────────────────────────────────────────────────────────────────
 
-export type AppView = 'home' | 'workspace'
+export type AppView = 'home' | 'workspace' | 'admin'
 
 export type WorkspaceSection =
   | 'sources'
