@@ -55,10 +55,9 @@ function RunDetailPanel({
   }, [manifest])
 
   useEffect(() => {
-    platform.getRunIssues(run.id).then(iss => {
-      setIssues(iss)
-      setLoadingIssues(false)
-    })
+    platform.getRunIssues(run.id)
+      .then(iss => { setIssues(iss); setLoadingIssues(false) })
+      .catch(() => setLoadingIssues(false))
   }, [run.id])
 
   useEffect(() => {
@@ -319,18 +318,21 @@ export function RunsView() {
 
   // Load transformations on mount
   useEffect(() => {
-    platform.listTransformations().then(list => {
-      setTransformations(list)
-      if (list.length > 0) setSelectedTransId(list[0].id)
-      setLoading(false)
-    })
+    platform.listTransformations()
+      .then(list => {
+        setTransformations(list)
+        if (list.length > 0) setSelectedTransId(list[0].id)
+        setLoading(false)
+      })
+      .catch(() => setLoading(false))
   }, [])
 
   // Load runs whenever selected transformation changes
-  const loadRuns = useCallback(async () => {
+  const loadRuns = useCallback(() => {
     if (!selectedTransId) return
-    const list = await platform.listRuns(selectedTransId)
-    setRuns(list)
+    platform.listRuns(selectedTransId)
+      .then(list => setRuns(list))
+      .catch(() => {})
   }, [selectedTransId])
 
   useEffect(() => {

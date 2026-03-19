@@ -89,7 +89,7 @@ export class WebPlatform implements IPlatform {
   deleteProject(): Promise<void> { return api('/project/delete') }
 
   // ── Objects & Fields ─────────────────────────────────────────────────────
-  inferSchema(filePath: string, options?: object):Promise<{ headers: string[]; fields: InferredField[]; }> { return api('/objects/inferSchema', { filePath, options }) }
+  inferSchema(filePath: string, options?: object):Promise<{ headers: string[]; fields: InferredField[]; rows: Record<string, string>[] }> { return api('/objects/inferSchema', { filePath, options }) }
   inferSchemaFromHeaders(filePath: string, options?: object):Promise<{ headers: string[]; fields: InferredField[]; }> { return api('/objects/inferSchemaFromHeaders', { filePath, options }) }
   createObject(role: string, name: string, description?: string, systemName?: string, outputFormat?: string, templateConfig?: object): Promise<DataObject> {
     return api('/objects/create', { role, name, description, systemName, outputFormat, templateConfig })

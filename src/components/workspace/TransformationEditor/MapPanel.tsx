@@ -21,8 +21,8 @@ interface FieldRuleState {
 }
 
 type ConcatPart =
-  | { type: 'field'; sourceObjectId: string; sourceFieldName: string }
-  | { type: 'literal'; value: string }
+  | { _id?: string; type: 'field'; sourceObjectId: string; sourceFieldName: string }
+  | { _id?: string; type: 'literal'; value: string }
 
 // ── Per-rule-type config editors ──────────────────────────────────────────────
 
@@ -126,16 +126,16 @@ function ConcatEditor({
     onChange({ parts: parts.filter((_, idx) => idx !== i) })
   }
   const addField = () => {
-    onChange({ parts: [...parts, { type: 'field', sourceObjectId: '', sourceFieldName: '' }] })
+    onChange({ parts: [...parts, { _id: crypto.randomUUID(), type: 'field', sourceObjectId: '', sourceFieldName: '' }] })
   }
   const addLiteral = () => {
-    onChange({ parts: [...parts, { type: 'literal', value: '' }] })
+    onChange({ parts: [...parts, { _id: crypto.randomUUID(), type: 'literal', value: '' }] })
   }
 
   return (
     <div className="space-y-1.5">
       {parts.map((part, i) => (
-        <div key={i} className="flex items-center gap-2">
+        <div key={part._id ?? i} className="flex items-center gap-2">
           <select
             value={part.type}
             onChange={e => updatePart(i, e.target.value === 'field'
@@ -310,6 +310,7 @@ const COND_OPERATORS: Array<{ value: string; label: string; noValue?: boolean }>
 const NO_VALUE_COND_OPS = new Set(COND_OPERATORS.filter(o => o.noValue).map(o => o.value))
 
 interface ConditionalBranch {
+  _id?: string
   field: string        // encoded "objectId::fieldName"
   op: string
   value: string
@@ -324,7 +325,7 @@ interface ConditionalConfig {
 }
 
 function defaultBranch(): ConditionalBranch {
-  return { field: '', op: '=', value: '', outputType: 'literal', outputValue: '' }
+  return { _id: crypto.randomUUID(), field: '', op: '=', value: '', outputType: 'literal', outputValue: '' }
 }
 
 function ConditionalEditor({
@@ -390,7 +391,7 @@ function ConditionalEditor({
   return (
     <div className="space-y-2 w-full">
       {branches.map((branch, i) => (
-        <div key={i} className="space-y-1">
+        <div key={branch._id ?? i} className="space-y-1">
           {/* Condition row */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs font-bold text-violet-500 w-8 shrink-0">{i === 0 ? 'IF' : 'ELIF'}</span>
@@ -511,6 +512,116 @@ function PicklistMappingHint({
   )
 }
 
+// ── Broken source-field detection ─────────────────────────────────────────────
+
+/** Resolves the best upstream source ID for a column name.
+ *  Prefers the originally-referenced source if still valid; otherwise picks the first match. */
+function resolveSourceRef(
+  sourceObjectId: string,
+  sourceFieldName: string,
+  upstreamSourceIds: string[],
+  fieldsMap: Record<string, ObjectField[]>,
+): string {
+  if (upstreamSourceIds.includes(sourceObjectId) && fieldsMap[sourceObjectId]?.some(f => f.name === sourceFieldName))
+    return sourceObjectId
+  return upstreamSourceIds.find(sid => fieldsMap[sid]?.some(f => f.name === sourceFieldName)) ?? sourceObjectId
+}
+
+/** Rewrites stale sourceObjectId references in a rule config to point to the correct upstream source. */
+function fixSourceRefs(
+  ruleType: string,
+  config: Record<string, unknown>,
+  upstreamSourceIds: string[],
+  fieldsMap: Record<string, ObjectField[]>,
+): Record<string, unknown> {
+  if (ruleType === 'direct' || ruleType === 'split' || ruleType === 'dateformat') {
+    const oid = config.sourceObjectId as string | undefined
+    const fname = config.sourceFieldName as string | undefined
+    if (!oid || !fname) return config
+    return { ...config, sourceObjectId: resolveSourceRef(oid, fname, upstreamSourceIds, fieldsMap) }
+  }
+  if (ruleType === 'concat') {
+    const parts = (config.parts as ConcatPart[]) ?? []
+    return {
+      ...config,
+      parts: parts.map(p =>
+        p.type === 'field'
+          ? { ...p, sourceObjectId: resolveSourceRef(p.sourceObjectId, p.sourceFieldName, upstreamSourceIds, fieldsMap) }
+          : p
+      ),
+    }
+  }
+  if (ruleType === 'conditional') {
+    const cfg = config as unknown as ConditionalConfig
+    return {
+      ...cfg,
+      branches: (cfg.branches ?? []).map(b => {
+        let branch = { ...b }
+        if (branch.field) {
+          const { sourceObjectId, sourceFieldName } = decodeField(branch.field)
+          branch = { ...branch, field: encodeField(resolveSourceRef(sourceObjectId, sourceFieldName, upstreamSourceIds, fieldsMap), sourceFieldName) }
+        }
+        if (branch.outputType === 'field' && branch.outputValue) {
+          const { sourceObjectId, sourceFieldName } = decodeField(branch.outputValue)
+          branch = { ...branch, outputValue: encodeField(resolveSourceRef(sourceObjectId, sourceFieldName, upstreamSourceIds, fieldsMap), sourceFieldName) }
+        }
+        return branch
+      }),
+      ...(cfg.elseOutputType === 'field' && cfg.elseOutputValue
+        ? (() => {
+            const { sourceObjectId, sourceFieldName } = decodeField(cfg.elseOutputValue)
+            return { elseOutputValue: encodeField(resolveSourceRef(sourceObjectId, sourceFieldName, upstreamSourceIds, fieldsMap), sourceFieldName) }
+          })()
+        : {}),
+    } as unknown as Record<string, unknown>
+  }
+  return config
+}
+
+/** Returns unique field names that are referenced by a rule but not found in any upstream source. */
+function findBrokenSourceRefs(
+  ruleType: string,
+  config: Record<string, unknown>,
+  upstreamSourceIds: string[],
+  fieldsMap: Record<string, ObjectField[]>,
+): string[] {
+  const broken: string[] = []
+  // Check by column NAME across all upstream sources — source object may have been swapped
+  const check = (_sourceObjectId: string | undefined, sourceFieldName: string | undefined) => {
+    if (!sourceFieldName) return
+    const existsAnywhere = upstreamSourceIds.some(sid =>
+      fieldsMap[sid]?.some(f => f.name === sourceFieldName)
+    )
+    if (!existsAnywhere) broken.push(sourceFieldName)
+  }
+
+  if (ruleType === 'direct' || ruleType === 'split' || ruleType === 'dateformat') {
+    check(config.sourceObjectId as string | undefined, config.sourceFieldName as string | undefined)
+  } else if (ruleType === 'concat') {
+    for (const part of (config.parts as ConcatPart[]) ?? []) {
+      if (part.type === 'field') check(part.sourceObjectId, part.sourceFieldName)
+    }
+  } else if (ruleType === 'conditional') {
+    const cfg = config as unknown as ConditionalConfig
+    for (const branch of cfg.branches ?? []) {
+      if (branch.field) {
+        const { sourceObjectId, sourceFieldName } = decodeField(branch.field)
+        check(sourceObjectId, sourceFieldName)
+      }
+      if (branch.outputType === 'field' && branch.outputValue) {
+        const { sourceObjectId, sourceFieldName } = decodeField(branch.outputValue)
+        check(sourceObjectId, sourceFieldName)
+      }
+    }
+    if (cfg.elseOutputType === 'field' && cfg.elseOutputValue) {
+      const { sourceObjectId, sourceFieldName } = decodeField(cfg.elseOutputValue)
+      check(sourceObjectId, sourceFieldName)
+    }
+  }
+
+  return [...new Set(broken)]
+}
+
 // ── Rule type list ────────────────────────────────────────────────────────────
 
 const RULE_TYPES = [
@@ -588,12 +699,22 @@ export function MapPanel({
   )
 
   const [rules, setRules] = useState<Record<string, FieldRuleState>>(() => {
+    // Inline upstream IDs so we can remap stale source refs on open (before useMemo runs)
+    const initUpstreamIds = findUpstreamSourceIds(mapNodeId, nodes, edges)
+    const initMappings = fieldMappings.filter(m =>
+      m.mapNodeId === mapNodeId ||
+      (!m.mapNodeId && m.targetObjectId === targetObjectId && mapNodeId === `map-${targetObjectId}`)
+    )
     const initial: Record<string, FieldRuleState> = {}
     for (const field of targetFields) {
-      const mapping = existingMappings.find(m => m.targetFieldId === field.id)
-      initial[field.id] = mapping
-        ? { ruleType: mapping.ruleType, config: JSON.parse(mapping.ruleConfig) as Record<string, unknown> }
-        : { ruleType: '', config: {} }
+      const mapping = initMappings.find(m => m.targetFieldId === field.id)
+      if (mapping) {
+        const rawConfig = JSON.parse(mapping.ruleConfig) as Record<string, unknown>
+        const remappedConfig = fixSourceRefs(mapping.ruleType, rawConfig, initUpstreamIds, fieldsMap)
+        initial[field.id] = { ruleType: mapping.ruleType, config: remappedConfig }
+      } else {
+        initial[field.id] = { ruleType: '', config: {} }
+      }
     }
     return initial
   })
@@ -648,7 +769,8 @@ export function MapPanel({
           if (rule.ruleType === '') {
             return existing ? platform.deleteFieldMapping(existing.id) : Promise.resolve()
           }
-          const finalConfig = enrichConfig(field, rule)
+          const remappedRule = { ...rule, config: fixSourceRefs(rule.ruleType, rule.config, upstreamSourceIds, fieldsMap) }
+          const finalConfig = enrichConfig(field, remappedRule)
           return platform.createFieldMapping(
             transformationId,
             targetObjectId,
@@ -744,6 +866,9 @@ export function MapPanel({
             targetFields.map(field => {
               const rule = rules[field.id] ?? { ruleType: '', config: {} }
               const isMapped = rule.ruleType !== ''
+              const brokenRefs = rule.ruleType
+                ? findBrokenSourceRefs(rule.ruleType, rule.config, upstreamSourceIds, fieldsMap)
+                : []
 
               return (
                 <div
@@ -818,6 +943,15 @@ export function MapPanel({
                     )}
                     {rule.ruleType === 'conditional' && (
                       <ConditionalEditor config={rule.config} onChange={c => setFieldRule(field.id, { config: c })} {...sharedEditorProps} />
+                    )}
+                    {brokenRefs.length > 0 && (
+                      <div className="flex items-center gap-1.5 text-xs text-red-500 mt-1.5">
+                        <span className="shrink-0 font-bold">✕</span>
+                        <span>
+                          Column{brokenRefs.length > 1 ? 's' : ''} not found in source:{' '}
+                          <span className="font-medium">{brokenRefs.join(', ')}</span>
+                        </span>
+                      </div>
                     )}
                   </div>
                 </div>

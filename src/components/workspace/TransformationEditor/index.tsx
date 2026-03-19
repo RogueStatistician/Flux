@@ -262,6 +262,9 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
   const edgesRef = useRef<Edge[]>([])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Clear any pending save on unmount to avoid calling setters on an unmounted component
+  useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current) }, [])
+
   // Keep refs in sync
   useEffect(() => { nodesRef.current = nodes }, [nodes])
   useEffect(() => { edgesRef.current = edges }, [edges])
@@ -364,31 +367,14 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
   }, [scheduleSave, transformationId])
 
   const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
-    // When an edge going INTO a MapNode is removed, clear that MapNode's rules.
-    // This happens when: Delete key on edge, or source node deleted (React Flow fires edge changes too).
-    for (const change of changes) {
-      if (change.type !== 'remove') continue
-      const edge = edgesRef.current.find(e => e.id === change.id)
-      if (!edge) continue
-      const targetNode = nodesRef.current.find(n => n.id === edge.target)
-      if (targetNode?.type !== 'mapOperator') continue
-      const targetObjectId = (targetNode.data as Record<string, unknown>).targetObjectId as string
-      if (targetNode.id === `map-${targetObjectId}`) {
-        platform.deleteFieldMappingsByTarget(transformationId, targetObjectId)
-          .then(() => setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId)))
-          .catch(() => {})
-      } else {
-        platform.deleteFieldMappingsByNode(targetNode.id)
-          .then(() => setFieldMappings(prev => prev.filter(m => m.mapNodeId !== targetNode.id)))
-          .catch(() => {})
-      }
-    }
+    // Mappings are preserved when edges are removed — the MapPanel shows broken-ref warnings
+    // instead of deleting rules. Rules are only deleted when a MapNode or target is explicitly removed.
     setEdges(eds => {
       const updated = applyEdgeChanges(changes, eds)
       scheduleSave(nodesRef.current, updated)
       return updated
     })
-  }, [scheduleSave, transformationId])
+  }, [scheduleSave])
 
   // ── Connect handler — creates canvas edge only (no field_mappings) ─────────
 
@@ -429,25 +415,8 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
     const isOnCanvas = nodesRef.current.some(n => n.id === nodeId)
 
     if (isOnCanvas) {
-      // Clear rules for MapNodes directly connected to this source
-      const connectedMapNodeIds = edgesRef.current
-        .filter(e => e.source === nodeId)
-        .map(e => e.target)
-        .filter(targetId => nodesRef.current.find(n => n.id === targetId)?.type === 'mapOperator')
-      for (const mapNodeId of connectedMapNodeIds) {
-        const mapNode = nodesRef.current.find(n => n.id === mapNodeId)
-        if (!mapNode) continue
-        const targetObjectId = (mapNode.data as Record<string, unknown>).targetObjectId as string
-        if (mapNodeId === `map-${targetObjectId}`) {
-          platform.deleteFieldMappingsByTarget(transformationId, targetObjectId)
-            .then(() => setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId)))
-            .catch(() => {})
-        } else {
-          platform.deleteFieldMappingsByNode(mapNodeId)
-            .then(() => setFieldMappings(prev => prev.filter(m => m.mapNodeId !== mapNodeId)))
-            .catch(() => {})
-        }
-      }
+      // Remove the node and its edges — mappings are preserved (column-name based).
+      // The MapPanel will flag any rules that reference fields no longer available.
       setNodes(nds => {
         const updated = nds.filter(n => n.id !== nodeId)
         scheduleSave(updated, edgesRef.current)

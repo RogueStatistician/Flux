@@ -43,7 +43,7 @@ interface ElectronAPI {
   deleteProject(): Promise<void>
 
   // ── Objects & Fields ───────────────────────────────────────────────────────
-  inferSchema(filePath: string, options?: { separator?: string; skipRows?: number; skipColumns?: number }): Promise<{ headers: string[]; fields: InferredField[] }>
+  inferSchema(filePath: string, options?: { separator?: string; skipRows?: number; skipColumns?: number }): Promise<{ headers: string[]; fields: InferredField[]; rows: Record<string, string>[] }>
   inferSchemaFromHeaders(filePath: string, options?: { separator?: string; skipRows?: number; skipColumns?: number }): Promise<{ headers: string[]; fields: InferredField[] }>
   createObject(
     role: ObjectRole,

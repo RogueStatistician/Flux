@@ -4,6 +4,9 @@
   "description": "Flux — Field Level Universal EXchange",
   "main": "dist-electron/main.js",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite",
     "dev:web": "concurrently \"npx tsx --watch web-server/server.ts\" \"vite --config vite.web.config.ts\"",
@@ -11,12 +14,17 @@
     "build": "tsc && vite build && electron-builder",
     "build:renderer": "vite build",
     "build:web": "vite build --config vite.web.config.ts",
+    "build:server": "tsc -p tsconfig.web.json",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build:preload": "esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs --sourcemap",
     "electron:dev": "npm run rebuild-native && npm run build:preload && concurrently \"vite\" \"esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs --sourcemap --watch\"",
     "preview": "vite preview",
+    "test": "npm rebuild better-sqlite3 && vitest run",
+    "test:watch": "npm rebuild better-sqlite3 && vitest",
+    "test:coverage": "npm rebuild better-sqlite3 && vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
+    "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
     "rebuild-native": "electron-rebuild -f -w better-sqlite3",
     "rebuild-node": "node-pre-gyp install --fallback-to-build --directory node_modules/better-sqlite3"
@@ -45,6 +53,7 @@
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^4.1.0",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.0.1",
     "electron": "^35.7.5",
@@ -56,6 +65,7 @@
     "vite": "^6.4.1",
     "vite-plugin-electron": "^0.28.8",
     "vite-plugin-electron-renderer": "^0.14.6",
+    "vitest": "^4.1.0",
     "wait-on": "^8.0.0"
   },
   "build": {

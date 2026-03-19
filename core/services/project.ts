@@ -58,7 +58,8 @@ export function closeProjectRecord() {
 export function updateProjectRecord(filePath: string, fields: Partial<{ name: string; description: string; client: string }>) {
   const db = getDb()
   const now = new Date().toISOString()
-  const row = db.prepare('SELECT id FROM projects LIMIT 1').get() as { id: string }
+  const row = db.prepare('SELECT id FROM projects LIMIT 1').get() as { id: string } | undefined
+  if (!row) throw new Error('No project record found.')
   if (fields.name !== undefined)
     db.prepare('UPDATE projects SET name = ?, updated_at = ? WHERE id = ?').run(fields.name, now, row.id)
   if (fields.description !== undefined)

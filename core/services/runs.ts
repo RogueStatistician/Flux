@@ -30,6 +30,10 @@ interface RunIssueRow {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function safeJsonParse(s: string): unknown {
+  try { return JSON.parse(s) } catch { return undefined }
+}
+
 function rowToRun(r: RunRow) {
   return {
     id: r.id,
@@ -37,8 +41,8 @@ function rowToRun(r: RunRow) {
     startedAt: r.started_at,
     completedAt: r.completed_at ?? undefined,
     status: r.status,
-    stats: r.stats ? (JSON.parse(r.stats) as unknown) : undefined,
-    outputManifest: r.output_manifest ? (JSON.parse(r.output_manifest) as unknown) : undefined,
+    stats: r.stats ? safeJsonParse(r.stats) : undefined,
+    outputManifest: r.output_manifest ? safeJsonParse(r.output_manifest) : undefined,
   }
 }
 
@@ -85,8 +89,11 @@ export async function previewOutput(runId: string, targetObjectId: string, limit
     | undefined
   if (!row?.output_manifest) throw new Error('No output manifest for this run.')
 
-  const manifest = JSON.parse(row.output_manifest) as {
-    targets: Array<{ objectId: string; filePath: string; format: string }>
+  let manifest: { targets: Array<{ objectId: string; filePath: string; format: string }> }
+  try {
+    manifest = JSON.parse(row.output_manifest) as typeof manifest
+  } catch {
+    throw new Error('Output manifest is corrupted. Re-run the transformation.')
   }
   const target = manifest.targets.find(t => t.objectId === targetObjectId)
   if (!target) throw new Error('Target not found in manifest.')
@@ -149,8 +156,11 @@ export function copyOutputFile(runId: string, targetObjectId: string, destPath: 
     | undefined
   if (!row?.output_manifest) throw new Error('No output manifest for this run.')
 
-  const manifest = JSON.parse(row.output_manifest) as {
-    targets: Array<{ objectId: string; filePath: string }>
+  let manifest: { targets: Array<{ objectId: string; filePath: string }> }
+  try {
+    manifest = JSON.parse(row.output_manifest) as typeof manifest
+  } catch {
+    throw new Error('Output manifest is corrupted. Re-run the transformation.')
   }
   const target = manifest.targets.find(t => t.objectId === targetObjectId)
   if (!target) throw new Error('Target output not found in manifest.')

@@ -170,7 +170,8 @@ export async function parseAllSheets(filePath: string): Promise<Array<{
 
   const buf = fs.readFileSync(filePath)
   const wb = new ExcelJS.Workbook()
-  await wb.xlsx.load(buf)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await wb.xlsx.load(buf as any)
 
   const results: Array<{ sheetName: string; headers: string[]; rows: Record<string, string>[] }> = []
   wb.eachSheet(ws => {

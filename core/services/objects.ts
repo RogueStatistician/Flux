@@ -91,7 +91,7 @@ function getProjectId(): string {
 export async function inferSchemaFromFile(filePath: string, options?: ParseOptions) {
   const { headers, rows } = await parseFile(filePath, 200, options)
   const fields = inferSchema(headers, rows)
-  return { headers, fields }
+  return { headers, fields, rows: rows.slice(0, 8) }
 }
 
 /** Read only the headers from a file (for target template import). */

@@ -99,22 +99,22 @@ function sendProgress(runId: string, payload: Record<string, unknown>): void {
 
 // ── Rule applicators ──────────────────────────────────────────────────────────
 
-function applyDirect(
+export function applyDirect(
   cfg: { sourceFieldName: string },
   row: Record<string, string>,
 ): string {
   return row[cfg.sourceFieldName] ?? ''
 }
 
-function applyConstant(cfg: { value: string }): string {
+export function applyConstant(cfg: { value: string }): string {
   return cfg.value ?? ''
 }
 
-function applyUUID(): string {
+export function applyUUID(): string {
   return crypto.randomUUID()
 }
 
-function applyConcat(
+export function applyConcat(
   cfg: { parts?: Array<{ type: 'field'; sourceFieldName: string } | { type: 'literal'; value: string }> },
   row: Record<string, string>,
 ): string {
@@ -123,7 +123,7 @@ function applyConcat(
   ).join('')
 }
 
-function applySplit(
+export function applySplit(
   cfg: { sourceFieldName: string; delimiter?: string; index?: number },
   row: Record<string, string>,
 ): string {
@@ -132,7 +132,7 @@ function applySplit(
   return parts[cfg.index ?? 0] ?? ''
 }
 
-function applySubstring(
+export function applySubstring(
   cfg: { sourceFieldName: string; start?: number; length?: number },
   row: Record<string, string>,
 ): string {
@@ -143,7 +143,7 @@ function applySubstring(
     : val.substring(start)
 }
 
-function applyDateFormat(
+export function applyDateFormat(
   cfg: { sourceFieldName: string; outputFormat?: string },
   row: Record<string, string>,
 ): string {
@@ -165,7 +165,7 @@ function applyDateFormat(
   }
 }
 
-function applyPicklistTranslate(
+export function applyPicklistTranslate(
   cfg: { sourceFieldName: string; mappingId?: string; fallback?: string },
   row: Record<string, string>,
   picklistMaps: Map<string, Map<string, string>>,
@@ -176,7 +176,7 @@ function applyPicklistTranslate(
   return map?.get(val) ?? cfg.fallback ?? val
 }
 
-function applyExpression(
+export function applyExpression(
   cfg: { expression: string },
   row: Record<string, string>,
   rowIndex: number,
@@ -191,11 +191,11 @@ function applyExpression(
   }
 }
 
-function applyIncremental(cfg: { start?: number; step?: number }, rowIndex: number): string {
+export function applyIncremental(cfg: { start?: number; step?: number }, rowIndex: number): string {
   return String((cfg.start ?? 1) + rowIndex * (cfg.step ?? 1))
 }
 
-interface ConditionalBranch {
+export interface ConditionalBranch {
   field: string        // encoded "objectId::fieldName"
   op: string
   value: string
@@ -203,7 +203,7 @@ interface ConditionalBranch {
   outputValue: string
 }
 
-function evalCondOp(op: string, cell: string, val: string): boolean {
+export function evalCondOp(op: string, cell: string, val: string): boolean {
   switch (op) {
     case '=':            return cell === val
     case '!=':           return cell !== val
@@ -221,7 +221,7 @@ function evalCondOp(op: string, cell: string, val: string): boolean {
   }
 }
 
-function applyConditional(
+export function applyConditional(
   cfg: { branches?: ConditionalBranch[]; elseOutputType?: string; elseOutputValue?: string },
   row: Record<string, string>,
 ): string {
@@ -267,7 +267,7 @@ interface CanvasState {
   edges: CanvasEdge[]
 }
 
-interface FilterCondition {
+export interface FilterCondition {
   field: string  // encoded as "objectId::fieldName"
   op: string
   value: string
@@ -275,7 +275,7 @@ interface FilterCondition {
 
 // ── Filter evaluation ─────────────────────────────────────────────────────────
 
-function evaluateFilterCondition(cond: FilterCondition, row: Record<string, string>): boolean {
+export function evaluateFilterCondition(cond: FilterCondition, row: Record<string, string>): boolean {
   // field is encoded as "objectId::fieldName" — extract just the field name
   const sep = cond.field.indexOf('::')
   const fieldName = sep >= 0 ? cond.field.slice(sep + 2) : cond.field
@@ -857,12 +857,16 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
   const picklistMaps = new Map<string, Map<string, string>>()
   for (const m of mappingRows) {
     let mid: string | undefined
-    if (m.rule_type === 'picklisttranslate') {
-      const cfg = JSON.parse(m.rule_config) as { mappingId?: string }
-      mid = cfg.mappingId
-    } else if (m.rule_type === 'direct') {
-      const cfg = JSON.parse(m.rule_config) as { picklistMappingId?: string }
-      mid = cfg.picklistMappingId
+    try {
+      if (m.rule_type === 'picklisttranslate') {
+        const cfg = JSON.parse(m.rule_config) as { mappingId?: string }
+        mid = cfg.mappingId
+      } else if (m.rule_type === 'direct') {
+        const cfg = JSON.parse(m.rule_config) as { picklistMappingId?: string }
+        mid = cfg.picklistMappingId
+      }
+    } catch {
+      // Malformed rule_config — skip picklist pre-load for this mapping
     }
     if (mid && !picklistMaps.has(mid)) {
       const entries = db.prepare(
@@ -945,8 +949,12 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
         const sourceRefTypes = new Set(['direct', 'concat', 'split', 'substring', 'dateformat', 'picklisttranslate', 'expression'])
         for (const fm of mappings) {
           if (sourceRefTypes.has(fm.rule_type)) {
-            const cfg = JSON.parse(fm.rule_config) as { sourceObjectId?: string }
-            if (cfg.sourceObjectId) { primarySourceObjectId = cfg.sourceObjectId; break }
+            try {
+              const cfg = JSON.parse(fm.rule_config) as { sourceObjectId?: string }
+              if (cfg.sourceObjectId) { primarySourceObjectId = cfg.sourceObjectId; break }
+            } catch {
+              // Malformed rule_config — skip this mapping for source detection
+            }
           }
         }
         const joinSpec = canvas ? findJoinSpec(targetObjectId, canvas) : null
