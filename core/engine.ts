@@ -1121,6 +1121,9 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
           fs.appendFileSync(diagPath, lines.join('\n') + '\n')
         }
         // ── END DIAG ──────────────────────────────────────────────────────────
+        // outRow is keyed by field ID (not name) to handle Workday templates where the
+        // same column name (e.g. "Delete", "Row ID*") appears in multiple sections.
+        // Keying by name would cause later sections to silently overwrite earlier values.
         const outRow: Record<string, string> = {}
         for (const tf of targetFields) {
           const fm = fmByFieldId.get(tf.id)
@@ -1129,7 +1132,7 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
               insertIssue.run(runId, i, tf.name, 'warning', `Required field "${tf.name}" has no mapping`)
               totalIssues++
             }
-            outRow[tf.name] = ''
+            outRow[tf.id] = ''
             continue
           }
           let value = ''
@@ -1162,7 +1165,7 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
             insertIssue.run(runId, i, tf.name, 'warning', `Required field "${tf.name}" is empty after mapping`)
             totalIssues++
           }
-          outRow[tf.name] = value
+          outRow[tf.id] = value
         }
         outputRows.push(outRow)
 
@@ -1220,11 +1223,12 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       }
 
       // Write transformed rows starting at firstDataRow (1-based: firstDataRow + 1).
+      // outRow is keyed by field ID (not name) — handles duplicate column names safely.
       outputRows.forEach((outRow, rowIdx) => {
         const r = firstDataRow + 1 + rowIdx
         targetFields.forEach((tf, colIdx) => {
           const c = skipColumns + 1 + colIdx
-          ws.getCell(r, c).value = outRow[tf.name] ?? ''
+          ws.getCell(r, c).value = outRow[tf.id] ?? ''
         })
       })
 
@@ -1237,7 +1241,7 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       const headers = targetFields.map(tf => tf.name)
       ws.addRow(headers)
       for (const row of outputRows) {
-        ws.addRow(headers.map(h => row[h] ?? ''))
+        ws.addRow(targetFields.map(tf => row[tf.id] ?? ''))
       }
       const buf = await wb.xlsx.writeBuffer()
       fs.writeFileSync(outFilePath, Buffer.from(buf as ArrayBuffer))
@@ -1245,8 +1249,8 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       const headers = targetFields.map(f => f.name)
       const csvLines = [headers.join(',')]
       for (const row of outputRows) {
-        csvLines.push(headers.map(h => {
-          const v = row[h] ?? ''
+        csvLines.push(targetFields.map(tf => {
+          const v = row[tf.id] ?? ''
           return (v.includes(',') || v.includes('"') || v.includes('\n'))
             ? `"${v.replace(/"/g, '""')}"`
             : v
