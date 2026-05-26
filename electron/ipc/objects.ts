@@ -6,6 +6,7 @@ import type { ParseOptions } from '../../core/importer.js'
 import {
   inferSchemaFromFile, inferSchemaFromHeadersOnly, createObject, listObjects,
   getObject, updateObject, deleteObject, importRows, getRows, upsertFields,
+  relinkSourceFile, getSourceFileStatus,
 } from '../../core/services/objects.js'
 
 export function registerObjectHandlers(): void {
@@ -19,4 +20,6 @@ export function registerObjectHandlers(): void {
   ipcMain.handle('objects:importRows', async (_e, id: string, filePath: string, options?: ParseOptions) => importRows(id, filePath, options))
   ipcMain.handle('objects:getRows', async (_e, id: string, offset: number, limit: number) => getRows(id, offset, limit))
   ipcMain.handle('fields:upsert', async (_e, objectId: string, fields: Array<{ name: string; description?: string; dataType: string; isRequired: boolean; isNullable: boolean; picklistId?: string; dateFormat?: string; maxLength?: number; notes?: string }>) => upsertFields(objectId, fields))
+  ipcMain.handle('objects:relinkSourceFile', async (_e, id: string, newFilePath: string) => relinkSourceFile(id, newFilePath))
+  ipcMain.handle('objects:getSourceFileStatus', async (_e, id: string) => getSourceFileStatus(id))
 }

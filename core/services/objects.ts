@@ -1,8 +1,12 @@
 /**
  * Objects service — CRUD for data_objects, object_fields, source_rows.
  */
+import fs from 'fs'
 import { getDb } from '../db.js'
 import { parseFile, parseHeaders, inferSchema, type ParseOptions } from '../importer.js'
+
+/** Maximum number of rows stored in source_rows for preview purposes. */
+export const PREVIEW_ROWS = 500
 
 // ── Row types ─────────────────────────────────────────────────────────────────
 
@@ -20,6 +24,11 @@ interface ObjectRow {
   template_data_start_row: number | null
   template_skip_columns: number | null
   template_file_path: string | null
+  source_file_path: string | null
+  source_separator: string | null
+  source_skip_rows: number | null
+  source_skip_columns: number | null
+  source_data_start_row: number | null
   created_at: string
   updated_at: string
 }
@@ -56,6 +65,11 @@ function rowToObject(r: ObjectRow) {
     templateDataStartRow: r.template_data_start_row ?? undefined,
     templateSkipColumns: r.template_skip_columns ?? undefined,
     templateFilePath: r.template_file_path ?? undefined,
+    sourceFilePath: r.source_file_path ?? undefined,
+    sourceSeparator: r.source_separator ?? undefined,
+    sourceSkipRows: r.source_skip_rows ?? undefined,
+    sourceSkipColumns: r.source_skip_columns ?? undefined,
+    sourceDataStartRow: r.source_data_start_row ?? undefined,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   }
@@ -202,37 +216,86 @@ export function deleteObject(id: string) {
 
 /**
  * Import rows from a file into an existing data object.
- * Replaces any existing source_rows for that object.
+ * Only the first PREVIEW_ROWS rows are stored in source_rows for UI preview.
+ * The full file path and import options are stored so the run engine can
+ * re-read the file directly at transformation time.
  */
 export async function importRows(id: string, filePath: string, options?: ParseOptions) {
   const db = getDb()
   const { rows } = await parseFile(filePath, undefined, options)
 
-  const deleteRows = db.prepare('DELETE FROM source_rows WHERE object_id = ?')
-  const insertRow = db.prepare(
-    'INSERT INTO source_rows (object_id, row_index, data) VALUES (?, ?, ?)'
-  )
-  const updateCount = db.prepare(
-    'UPDATE data_objects SET row_count = ?, file_name = ?, updated_at = ? WHERE id = ?'
-  )
-
   const fileName = filePath.split(/[\\/]/).pop() ?? filePath
   const now = new Date().toISOString()
+  const previewRows = rows.slice(0, PREVIEW_ROWS)
+
+  const deleteRows  = db.prepare('DELETE FROM source_rows WHERE object_id = ?')
+  const insertRow   = db.prepare('INSERT INTO source_rows (object_id, row_index, data) VALUES (?, ?, ?)')
+  const updateMeta  = db.prepare(`
+    UPDATE data_objects
+    SET row_count = ?, file_name = ?, updated_at = ?,
+        source_file_path = ?, source_separator = ?,
+        source_skip_rows = ?, source_skip_columns = ?, source_data_start_row = ?
+    WHERE id = ?
+  `)
 
   const importAll = db.transaction(() => {
     deleteRows.run(id)
-    rows.forEach((row, i) => insertRow.run(id, i, JSON.stringify(row)))
-    updateCount.run(rows.length, fileName, now, id)
+    previewRows.forEach((row, i) => insertRow.run(id, i, JSON.stringify(row)))
+    updateMeta.run(
+      rows.length, fileName, now,
+      filePath,
+      options?.separator ?? null,
+      options?.skipRows ?? null,
+      options?.skipColumns ?? null,
+      options?.dataStartRow ?? null,
+      id,
+    )
   })
   importAll()
 
   return { rowCount: rows.length }
 }
 
-/** Get a paginated slice of source rows for a data object. */
+/**
+ * Re-link a source object to a new file path (e.g. after the original file was moved).
+ * Uses the import options originally recorded; re-imports the preview rows.
+ */
+export async function relinkSourceFile(id: string, newFilePath: string) {
+  const db = getDb()
+  const obj = db.prepare(
+    'SELECT source_separator, source_skip_rows, source_skip_columns, source_data_start_row FROM data_objects WHERE id = ?'
+  ).get(id) as Pick<ObjectRow, 'source_separator' | 'source_skip_rows' | 'source_skip_columns' | 'source_data_start_row'> | undefined
+
+  return importRows(id, newFilePath, {
+    separator:     obj?.source_separator    ?? undefined,
+    skipRows:      obj?.source_skip_rows    ?? undefined,
+    skipColumns:   obj?.source_skip_columns ?? undefined,
+    dataStartRow:  obj?.source_data_start_row ?? undefined,
+  })
+}
+
+/**
+ * Return whether the source file for a data object exists on disk.
+ * Returns null when no source_file_path has been recorded yet (legacy / manual object).
+ */
+export function getSourceFileStatus(id: string): { filePath: string; exists: boolean } | null {
+  const row = getDb().prepare(
+    'SELECT source_file_path FROM data_objects WHERE id = ?'
+  ).get(id) as { source_file_path: string | null } | undefined
+
+  if (!row?.source_file_path) return null
+  return { filePath: row.source_file_path, exists: fs.existsSync(row.source_file_path) }
+}
+
+/** Get a paginated slice of source rows for a data object.
+ *  `total` reflects the true file row count (from data_objects.row_count) so
+ *  the UI correctly shows "10,000 rows" even though only PREVIEW_ROWS are stored. */
 export function getRows(id: string, offset: number, limit: number) {
   const db = getDb()
-  const total = (db.prepare('SELECT COUNT(*) as c FROM source_rows WHERE object_id = ?').get(id) as { c: number }).c
+  // Prefer row_count from the object record (true file size); fall back to counting stored rows
+  const meta = db.prepare('SELECT row_count FROM data_objects WHERE id = ?').get(id) as { row_count: number | null } | undefined
+  const total = meta?.row_count
+    ?? (db.prepare('SELECT COUNT(*) as c FROM source_rows WHERE object_id = ?').get(id) as { c: number }).c
   const rows = db.prepare(
     'SELECT data FROM source_rows WHERE object_id = ? ORDER BY row_index ASC LIMIT ? OFFSET ?'
   ).all(id, limit, offset) as { data: string }[]

@@ -24,6 +24,8 @@ export class ElectronPlatform implements IPlatform {
   updateObject(id: string, updates: Parameters<typeof window.electronAPI.updateObject>[1]) { return window.electronAPI.updateObject(id, updates) }
   deleteObject(id: string) { return window.electronAPI.deleteObject(id) }
   importRows(id: string, filePath: string, options?: Parameters<typeof window.electronAPI.importRows>[2]) { return window.electronAPI.importRows(id, filePath, options) }
+  relinkSourceFile(id: string, newFilePath: string) { return window.electronAPI.relinkSourceFile(id, newFilePath) }
+  getSourceFileStatus(id: string) { return window.electronAPI.getSourceFileStatus(id) }
   getRows(id: string, offset: number, limit: number) { return window.electronAPI.getRows(id, offset, limit) }
   upsertFields(objectId: string, fields: Parameters<typeof window.electronAPI.upsertFields>[1]) { return window.electronAPI.upsertFields(objectId, fields) }
 

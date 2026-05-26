@@ -73,6 +73,8 @@ interface ElectronAPI {
   updateObject(id: string, updates: Partial<{ name: string; description: string; systemName: string; outputFormat: OutputFormat }>): Promise<DataObject>
   deleteObject(id: string): Promise<void>
   importRows(id: string, filePath: string, options?: { separator?: string; skipRows?: number; dataStartRow?: number; skipColumns?: number }): Promise<{ rowCount: number }>
+  relinkSourceFile(id: string, newFilePath: string): Promise<{ rowCount: number }>
+  getSourceFileStatus(id: string): Promise<{ filePath: string; exists: boolean } | null>
   getRows(id: string, offset: number, limit: number): Promise<{ rows: Record<string, string>[]; total: number }>
   upsertFields(objectId: string, fields: Omit<ObjectField, 'id' | 'objectId' | 'position'>[]): Promise<ObjectField[]>
 
@@ -142,6 +144,12 @@ interface ElectronAPI {
   }): Promise<{ canceled: boolean; filePath?: string }>
 
   openPath(path: string): Promise<void>
+
+  // ── Dev tools ──────────────────────────────────────────────────────────────
+  dbListTables(): Promise<Array<{ name: string; rowCount: number }>>
+  dbQueryTable(tableName: string, page: number, pageSize: number): Promise<{ columns: string[]; rows: Record<string, unknown>[]; total: number }>
+  dbRawQuery(sql: string): Promise<{ columns: string[]; rows: Record<string, unknown>[]; total: number }>
+  renderTransformationQuery(transformationId: string): Promise<import('./platform/IPlatform.js').TransformationQuery[]>
 }
 
 declare global {

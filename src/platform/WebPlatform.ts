@@ -138,6 +138,8 @@ export class WebPlatform implements IPlatform {
   updateObject(id: string, updates: object): Promise<DataObject> { return api('/objects/update', { id, updates }) }
   deleteObject(id: string):Promise<void> { return api('/objects/delete', { id }) }
   importRows(id: string, filePath: string, options?: object):Promise<{ rowCount: number }> { return api('/objects/importRows', { id, filePath, options }) }
+  relinkSourceFile(id: string, newFilePath: string) { return api<{ rowCount: number }>('/objects/relinkSourceFile', { id, newFilePath }) }
+  getSourceFileStatus(id: string) { return api<{ filePath: string; exists: boolean } | null>('/objects/getSourceFileStatus', { id }) }
   getRows(id: string, offset: number, limit: number):Promise<{ rows: Record<string, string>[]; total: number }> { return api('/objects/getRows', { id, offset, limit }) }
   upsertFields(objectId: string, fields: unknown[]):Promise<ObjectField[]> { return api('/fields/upsert', { objectId, fields }) }
 

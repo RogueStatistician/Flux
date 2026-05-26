@@ -320,7 +320,9 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
   const scheduleSave = useCallback((currentNodes: Node[], currentEdges: Edge[]) => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
-      platform.saveCanvas(transformationId, serializeCanvas(currentNodes, currentEdges)).catch(() => {})
+      platform.saveCanvas(transformationId, serializeCanvas(currentNodes, currentEdges))
+        .then(() => setCanvasError(null))
+        .catch(err => setCanvasError(`Canvas save failed: ${err instanceof Error ? err.message : String(err)}`))
     }, SAVE_DEBOUNCE_MS)
   }, [transformationId])
 
@@ -350,12 +352,12 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
         // Scoped delete: only this node's rules (keep sibling MapNode rules intact).
         platform.deleteFieldMappingsByNode(nodeId)
           .then(() => setFieldMappings(prev => prev.filter(m => m.mapNodeId !== nodeId)))
-          .catch(() => {})
+          .catch(err => setCanvasError(`Failed to delete mappings: ${err instanceof Error ? err.message : String(err)}`))
       } else {
         // Last MapNode for target: full delete (covers both new-style and legacy null-scoped rows).
         platform.deleteFieldMappingsByTarget(transformationId, targetObjectId)
           .then(() => setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId)))
-          .catch(() => {})
+          .catch(err => setCanvasError(`Failed to delete mappings: ${err instanceof Error ? err.message : String(err)}`))
       }
     }
 
@@ -469,7 +471,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
       // Delete ALL field mapping rules for this target (all MapNodes + legacy null-scoped)
       platform.deleteFieldMappingsByTarget(transformationId, obj.id).then(() => {
         setFieldMappings(prev => prev.filter(m => m.targetObjectId !== obj.id))
-      }).catch(() => {})
+      }).catch(err => setCanvasError(`Failed to delete mappings: ${err instanceof Error ? err.message : String(err)}`))
     } else {
       const firstMapNodeId = `map-${obj.id}`
       const tgtCount = nodesRef.current.filter(n => n.type === 'targetObject').length
@@ -656,11 +658,11 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
         if (otherMaps.length > 0) {
           platform.deleteFieldMappingsByNode(nodeId)
             .then(() => setFieldMappings(prev => prev.filter(m => m.mapNodeId !== nodeId)))
-            .catch(() => {})
+            .catch(err => setCanvasError(`Failed to delete mappings: ${err instanceof Error ? err.message : String(err)}`))
         } else {
           platform.deleteFieldMappingsByTarget(transformationId, targetObjectId)
             .then(() => setFieldMappings(prev => prev.filter(m => m.targetObjectId !== targetObjectId)))
-            .catch(() => {})
+            .catch(err => setCanvasError(`Failed to delete mappings: ${err instanceof Error ? err.message : String(err)}`))
         }
       }
     }

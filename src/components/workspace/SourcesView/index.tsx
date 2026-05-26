@@ -11,12 +11,44 @@ export function SourcesView() {
   const [wizardFilePath, setWizardFilePath] = useState<string | null>(null)
   const [showWizard, setShowWizard] = useState(false)
   const [selectedObject, setSelectedObject] = useState<DataObject | null>(null)
+  // objectId → null (no file) | true (file ok) | false (file missing)
+  const [fileStatus, setFileStatus] = useState<Record<string, boolean | null>>({})
+  const [relinking, setRelinking] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    platform.listObjects('source').then(setObjects).finally(() => setLoading(false))
+    platform.listObjects('source').then(objs => {
+      setObjects(objs)
+      // Check file status for all source objects that have a file path recorded
+      objs.forEach(obj => {
+        platform.getSourceFileStatus(obj.id).then(status => {
+          setFileStatus(prev => ({ ...prev, [obj.id]: status ? status.exists : null }))
+        }).catch(() => {})
+      })
+    }).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const handleRelink = async (obj: DataObject) => {
+    const result = await platform.openFile({
+      title: `Re-link source file for "${obj.name}"`,
+      filters: [{ name: 'Excel / CSV', extensions: ['xlsx', 'xls', 'csv'] }],
+      properties: ['openFile'],
+    })
+    if (result.canceled || !result.filePaths[0]) return
+    setRelinking(obj.id)
+    try {
+      await platform.relinkSourceFile(obj.id, result.filePaths[0])
+      setFileStatus(prev => ({ ...prev, [obj.id]: true }))
+      // Refresh the object to get updated row_count / file_name
+      const updated = await platform.getObject(obj.id)
+      setObjects(prev => prev.map(o => o.id === obj.id ? updated.object : o))
+    } catch (e) {
+      alert(`Re-link failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setRelinking(null)
+    }
+  }
 
   const handleUpload = async () => {
     const result = await platform.openFile({
@@ -69,14 +101,30 @@ export function SourcesView() {
           <EmptyState onUpload={handleUpload} />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {objects.map(obj => (
-              <ObjectCard
-                key={obj.id}
-                object={obj}
-                onClick={() => setSelectedObject(obj)}
-                onDelete={() => handleDelete(obj.id)}
-              />
-            ))}
+            {objects.map(obj => {
+              const fileMissing = fileStatus[obj.id] === false
+              return (
+                <div key={obj.id} className="relative">
+                  <ObjectCard
+                    object={obj}
+                    onClick={() => setSelectedObject(obj)}
+                    onDelete={() => handleDelete(obj.id)}
+                  />
+                  {fileMissing && (
+                    <div className="absolute inset-x-0 bottom-0 bg-amber-50 border border-amber-300 rounded-b-lg px-3 py-2 flex items-center justify-between gap-2">
+                      <span className="text-xs text-amber-700 font-medium">Source file not found</span>
+                      <button
+                        onClick={() => handleRelink(obj)}
+                        disabled={relinking === obj.id}
+                        className="text-xs bg-amber-600 hover:bg-amber-700 text-white px-2 py-1 rounded transition-colors disabled:opacity-50 shrink-0"
+                      >
+                        {relinking === obj.id ? '…' : 'Re-link file'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
       </div>

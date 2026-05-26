@@ -64,6 +64,12 @@ const electronAPI = {
   importRows: (id: string, filePath: string, options?: { separator?: string; skipRows?: number; dataStartRow?: number; skipColumns?: number }) =>
     ipcRenderer.invoke('objects:importRows', id, filePath, options),
 
+  relinkSourceFile: (id: string, newFilePath: string) =>
+    ipcRenderer.invoke('objects:relinkSourceFile', id, newFilePath),
+
+  getSourceFileStatus: (id: string) =>
+    ipcRenderer.invoke('objects:getSourceFileStatus', id),
+
   getRows: (id: string, offset: number, limit: number) =>
     ipcRenderer.invoke('objects:getRows', id, offset, limit),
 

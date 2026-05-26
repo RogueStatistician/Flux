@@ -11,6 +11,7 @@ import path from 'path'
 import fs from 'fs'
 import ExcelJS from 'exceljs'
 import { getDb } from './db.js'
+import { parseFile } from './importer.js'
 
 // ── Platform configuration ────────────────────────────────────────────────────
 
@@ -71,6 +72,84 @@ interface ObjectFieldRow {
 interface SourceRowDB {
   row_index: number
   data: string
+}
+
+interface SourceObjectMeta {
+  source_file_path: string | null
+  source_separator: string | null
+  source_skip_rows: number | null
+  source_skip_columns: number | null
+  source_data_start_row: number | null
+}
+
+/**
+ * Load all rows for a source object.
+ * Reads from the original file when source_file_path is set (preferred path for large files).
+ * Falls back to the source_rows table when no path is recorded (legacy projects or manual objects).
+ */
+async function loadSourceObjectRows(
+  objectId: string,
+  db: ReturnType<typeof getDb>,
+): Promise<Record<string, string>[]> {
+  const meta = db.prepare(
+    'SELECT source_file_path, source_separator, source_skip_rows, source_skip_columns, source_data_start_row FROM data_objects WHERE id = ?'
+  ).get(objectId) as SourceObjectMeta | undefined
+
+  if (meta?.source_file_path) {
+    try {
+      const { rows } = await parseFile(meta.source_file_path, undefined, {
+        separator:    meta.source_separator    ?? undefined,
+        skipRows:     meta.source_skip_rows    ?? undefined,
+        skipColumns:  meta.source_skip_columns ?? undefined,
+        dataStartRow: meta.source_data_start_row ?? undefined,
+      })
+      return rows
+    } catch {
+      // File missing or unreadable — fall through to DB rows
+    }
+  }
+
+  // Legacy fallback: rows stored in source_rows table
+  return (db.prepare(
+    'SELECT row_index, data FROM source_rows WHERE object_id = ? ORDER BY row_index ASC'
+  ).all(objectId) as SourceRowDB[]).map(r => JSON.parse(r.data) as Record<string, string>)
+}
+
+/**
+ * Pre-load all source objects referenced in the canvas or in field mapping rule configs
+ * into a single cache. The engine then uses this cache instead of hitting the DB or disk
+ * per-row, keeping the hot loop fully synchronous.
+ */
+async function buildSourceCache(
+  canvas: CanvasState | null,
+  allMappings: FieldMappingRow[],
+  db: ReturnType<typeof getDb>,
+): Promise<Map<string, Record<string, string>[]>> {
+  const cache = new Map<string, Record<string, string>[]>()
+
+  // Collect IDs from canvas source nodes
+  if (canvas) {
+    for (const node of canvas.nodes) {
+      if (node.type === 'sourceObject' && typeof node.data?.objectId === 'string') {
+        const id = node.data.objectId as string
+        if (!cache.has(id)) cache.set(id, await loadSourceObjectRows(id, db))
+      }
+    }
+  }
+
+  // Collect IDs from rule configs (covers legacy paths and join/append without canvas)
+  const sourceRefTypes = new Set(['direct', 'concat', 'split', 'substring', 'dateformat', 'picklisttranslate', 'expression'])
+  for (const fm of allMappings) {
+    if (!sourceRefTypes.has(fm.rule_type)) continue
+    try {
+      const cfg = JSON.parse(fm.rule_config) as { sourceObjectId?: string }
+      if (cfg.sourceObjectId && !cache.has(cfg.sourceObjectId)) {
+        cache.set(cfg.sourceObjectId, await loadSourceObjectRows(cfg.sourceObjectId, db))
+      }
+    } catch { /* skip malformed config */ }
+  }
+
+  return cache
 }
 
 // ── Output manifest ───────────────────────────────────────────────────────────
@@ -645,16 +724,15 @@ function findDedupNodeInChain(fromNodeId: string, canvas: CanvasState): CanvasNo
 /**
  * Determine the source rows and filter conditions for a specific MapNode.
  * Handles: single source, filter chain, join, append, and dedup operator inputs.
+ * Rows are served from the pre-built sourceCache (populated at run start from the
+ * original source files or, for legacy projects, from the source_rows table).
  */
 function collectSourceRowsForMapNode(
   mapNodeId: string,
   canvas: CanvasState,
-  db: ReturnType<typeof getDb>,
+  sourceCache: Map<string, Record<string, string>[]>,
 ): SourcePathResult {
-  const loadRows = (objectId: string) =>
-    (db.prepare(
-      'SELECT row_index, data FROM source_rows WHERE object_id = ? ORDER BY row_index ASC'
-    ).all(objectId) as SourceRowDB[]).map(r => JSON.parse(r.data) as Record<string, string>)
+  const loadRows = (objectId: string): Record<string, string>[] => sourceCache.get(objectId) ?? []
 
   // Find the direct upstream node connected to this MapNode
   const inEdge = canvas.edges.find(e => e.target === mapNodeId)
@@ -665,7 +743,7 @@ function collectSourceRowsForMapNode(
 
   // Deduplicate is the direct upstream: collect rows from further upstream, apply dedup
   if (upstreamNode.type === 'dedupOperator') {
-    const innerResult = collectSourceRowsForMapNode(upstreamNode.id, canvas, db)
+    const innerResult = collectSourceRowsForMapNode(upstreamNode.id, canvas, sourceCache)
     let rows = innerResult.sourceRows
     if (innerResult.filterConditions.length > 0) {
       rows = rows.filter(r => innerResult.filterConditions.every(c => evaluateFilterCondition(c, r)))
@@ -878,6 +956,13 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
     }
   }
 
+  // ── Pre-load all source object rows ──────────────────────────────────────────
+  // Reads from the original file where source_file_path is set; falls back to the
+  // source_rows table for legacy projects. Done once before the hot loop so row
+  // access is synchronous throughout.
+
+  const sourceCache = await buildSourceCache(canvas, mappingRows, db)
+
   // ── Temp output directory ────────────────────────────────────────────────────
 
   const tempDir = path.join(getEngineConfig().tempDir, runId)
@@ -948,7 +1033,7 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       let filterConditions: FilterCondition[] = []
 
       if (canvas && mapNodeId) {
-        const result = collectSourceRowsForMapNode(mapNodeId, canvas, db)
+        const result = collectSourceRowsForMapNode(mapNodeId, canvas, sourceCache)
         sourceRows = result.sourceRows
         filterConditions = result.filterConditions
       } else {
@@ -967,9 +1052,7 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
         }
         const joinSpec = canvas ? findJoinSpec(targetObjectId, canvas) : null
         if (joinSpec) {
-          const loadRows = (objectId: string) =>
-            (db.prepare('SELECT row_index, data FROM source_rows WHERE object_id = ? ORDER BY row_index ASC')
-              .all(objectId) as SourceRowDB[]).map(r => JSON.parse(r.data) as Record<string, string>)
+          const loadRows = (objectId: string): Record<string, string>[] => sourceCache.get(objectId) ?? []
           let rowsA = loadRows(joinSpec.sourceAId)
           const filtersA = canvas ? findPreJoinFilters(joinSpec.sourceAId, joinSpec.joinNodeId, canvas) : []
           if (filtersA.length > 0) rowsA = rowsA.filter(row => filtersA.every(c => evaluateFilterCondition(c, row)))
@@ -979,8 +1062,7 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
           sourceRows = executeJoin(rowsA, rowsB, joinSpec)
           filterConditions = canvas ? findPostJoinFilters(joinSpec.joinNodeId, targetObjectId, canvas) : []
         } else if (primarySourceObjectId) {
-          sourceRows = (db.prepare('SELECT row_index, data FROM source_rows WHERE object_id = ? ORDER BY row_index ASC')
-            .all(primarySourceObjectId) as SourceRowDB[]).map(r => JSON.parse(r.data) as Record<string, string>)
+          sourceRows = sourceCache.get(primarySourceObjectId) ?? []
           filterConditions = canvas ? findFilterConditions(primarySourceObjectId, targetObjectId, canvas) : []
         }
       }

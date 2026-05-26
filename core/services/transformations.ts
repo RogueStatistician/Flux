@@ -128,11 +128,13 @@ export function saveCanvas(id: string, canvasState: string) {
 /** Delete a transformation and all associated data. */
 export function deleteTransformation(id: string) {
   const db = getDb()
-  // runs.transformation_id has no ON DELETE CASCADE, so delete manually.
-  // run_issues.run_id does CASCADE, so those are cleaned up automatically.
-  db.prepare('DELETE FROM runs WHERE transformation_id = ?').run(id)
-  // field_mappings has ON DELETE CASCADE, but this also handles any stragglers.
-  db.prepare('DELETE FROM transformations WHERE id = ?').run(id)
+  db.transaction(() => {
+    // runs.transformation_id has no ON DELETE CASCADE, so delete manually.
+    // run_issues.run_id does CASCADE, so those are cleaned up automatically.
+    db.prepare('DELETE FROM runs WHERE transformation_id = ?').run(id)
+    // field_mappings has ON DELETE CASCADE, but this also handles any stragglers.
+    db.prepare('DELETE FROM transformations WHERE id = ?').run(id)
+  })()
 }
 
 /** Duplicate a transformation (new name, same canvas state and field mappings). */
@@ -153,23 +155,28 @@ export function duplicateTransformation(id: string) {
     newName = `${src.name} (copy ${suffix++})`
   }
 
-  db.prepare(`
-    INSERT INTO transformations (id, project_id, name, description, canvas_state, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(newId, projectId, newName, src.description, src.canvas_state, now, now)
-
-  // Copy all field mappings with new IDs
+  // Copy all field mappings with new IDs — wrapped in a transaction so the new
+  // transformation either exists complete with all its mappings, or not at all.
   const mappings = db.prepare(
     'SELECT * FROM field_mappings WHERE transformation_id = ?'
   ).all(id) as FieldMappingRow[]
 
-  for (const m of mappings) {
-    db.prepare(`
-      INSERT INTO field_mappings
-        (id, transformation_id, target_object_id, target_field_id, rule_type, rule_config, notes, map_node_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(crypto.randomUUID(), newId, m.target_object_id, m.target_field_id, m.rule_type, m.rule_config, m.notes, m.map_node_id)
-  }
+  const insertTransformation = db.prepare(`
+    INSERT INTO transformations (id, project_id, name, description, canvas_state, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `)
+  const insertMapping = db.prepare(`
+    INSERT INTO field_mappings
+      (id, transformation_id, target_object_id, target_field_id, rule_type, rule_config, notes, map_node_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+
+  db.transaction(() => {
+    insertTransformation.run(newId, projectId, newName, src.description, src.canvas_state, now, now)
+    for (const m of mappings) {
+      insertMapping.run(crypto.randomUUID(), newId, m.target_object_id, m.target_field_id, m.rule_type, m.rule_config, m.notes, m.map_node_id)
+    }
+  })()
 
   return rowToTransformation(
     db.prepare('SELECT * FROM transformations WHERE id = ?').get(newId) as TransformationRow
@@ -189,28 +196,33 @@ export function createFieldMapping(
   mapNodeId?: string
 ) {
   const db = getDb()
-  // Remove any existing mapping for the same target field.
-  // When saving a node-scoped mapping: delete both the old node-scoped version AND any
-  // legacy null-scoped orphan for this field. Null-scoped mappings pre-date the MapNode
-  // feature (migration V5) and accumulate as orphans when a project is upgraded — leaving
-  // them in place causes the engine's legacy fallback path to pick up stale rules
-  // nondeterministically (last SQL row wins with no ORDER BY).
-  if (mapNodeId) {
-    db.prepare(
-      'DELETE FROM field_mappings WHERE transformation_id = ? AND target_field_id = ? AND (map_node_id = ? OR map_node_id IS NULL)'
-    ).run(transformationId, targetFieldId, mapNodeId)
-  } else {
-    db.prepare(
-      'DELETE FROM field_mappings WHERE transformation_id = ? AND target_field_id = ? AND map_node_id IS NULL'
-    ).run(transformationId, targetFieldId)
-  }
-
   const id = crypto.randomUUID()
-  db.prepare(`
-    INSERT INTO field_mappings
-      (id, transformation_id, target_object_id, target_field_id, rule_type, rule_config, notes, map_node_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, transformationId, targetObjectId, targetFieldId, ruleType, ruleConfig, notes ?? null, mapNodeId ?? null)
+
+  // The DELETE + INSERT must be atomic: if the INSERT fails after the DELETE the
+  // field would be left with no mapping at all.
+  db.transaction(() => {
+    // Remove any existing mapping for the same target field.
+    // When saving a node-scoped mapping: delete both the old node-scoped version AND any
+    // legacy null-scoped orphan for this field. Null-scoped mappings pre-date the MapNode
+    // feature (migration V5) and accumulate as orphans when a project is upgraded — leaving
+    // them in place causes the engine's legacy fallback path to pick up stale rules
+    // nondeterministically (last SQL row wins with no ORDER BY).
+    if (mapNodeId) {
+      db.prepare(
+        'DELETE FROM field_mappings WHERE transformation_id = ? AND target_field_id = ? AND (map_node_id = ? OR map_node_id IS NULL)'
+      ).run(transformationId, targetFieldId, mapNodeId)
+    } else {
+      db.prepare(
+        'DELETE FROM field_mappings WHERE transformation_id = ? AND target_field_id = ? AND map_node_id IS NULL'
+      ).run(transformationId, targetFieldId)
+    }
+
+    db.prepare(`
+      INSERT INTO field_mappings
+        (id, transformation_id, target_object_id, target_field_id, rule_type, rule_config, notes, map_node_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, transformationId, targetObjectId, targetFieldId, ruleType, ruleConfig, notes ?? null, mapNodeId ?? null)
+  })()
 
   return rowToFieldMapping(
     db.prepare('SELECT * FROM field_mappings WHERE id = ?').get(id) as FieldMappingRow
@@ -220,12 +232,14 @@ export function createFieldMapping(
 /** Update an existing field mapping rule type / config. */
 export function updateFieldMapping(id: string, updates: Partial<{ ruleType: string; ruleConfig: string; notes: string }>) {
   const db = getDb()
-  if (updates.ruleType !== undefined)
-    db.prepare('UPDATE field_mappings SET rule_type = ? WHERE id = ?').run(updates.ruleType, id)
-  if (updates.ruleConfig !== undefined)
-    db.prepare('UPDATE field_mappings SET rule_config = ? WHERE id = ?').run(updates.ruleConfig, id)
-  if ('notes' in updates)
-    db.prepare('UPDATE field_mappings SET notes = ? WHERE id = ?').run(updates.notes ?? null, id)
+  db.transaction(() => {
+    if (updates.ruleType !== undefined)
+      db.prepare('UPDATE field_mappings SET rule_type = ? WHERE id = ?').run(updates.ruleType, id)
+    if (updates.ruleConfig !== undefined)
+      db.prepare('UPDATE field_mappings SET rule_config = ? WHERE id = ?').run(updates.ruleConfig, id)
+    if ('notes' in updates)
+      db.prepare('UPDATE field_mappings SET notes = ? WHERE id = ?').run(updates.notes ?? null, id)
+  })()
   return rowToFieldMapping(db.prepare('SELECT * FROM field_mappings WHERE id = ?').get(id) as FieldMappingRow)
 }
 

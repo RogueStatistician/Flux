@@ -282,6 +282,21 @@ ALTER TABLE field_mappings ADD COLUMN map_node_id TEXT;
 CREATE INDEX idx_field_mappings_node ON field_mappings(map_node_id);
 `
 
+/**
+ * Migration v5 → v6: store source file path + import options so the run engine
+ * reads directly from the original file instead of re-hydrating all rows from
+ * the DB. Only a preview sample (up to PREVIEW_ROWS rows) is kept in source_rows.
+ * Existing projects keep their source_rows untouched — the engine falls back to
+ * the DB when source_file_path is NULL.
+ */
+const MIGRATION_V6 = `
+ALTER TABLE data_objects ADD COLUMN source_file_path      TEXT;
+ALTER TABLE data_objects ADD COLUMN source_separator      TEXT;
+ALTER TABLE data_objects ADD COLUMN source_skip_rows      INTEGER DEFAULT 0;
+ALTER TABLE data_objects ADD COLUMN source_skip_columns   INTEGER DEFAULT 0;
+ALTER TABLE data_objects ADD COLUMN source_data_start_row INTEGER DEFAULT NULL;
+`
+
 // ── Migrations ────────────────────────────────────────────────────────────────
 
 function applyMigrations(db: Database.Database): void {
@@ -317,5 +332,9 @@ function applyMigrations(db: Database.Database): void {
   if (currentVersion < 5) {
     db.exec(MIGRATION_V5)
     db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '5')
+  }
+  if (currentVersion < 6) {
+    db.exec(MIGRATION_V6)
+    db.prepare('INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)').run('schema_version', '6')
   }
 }
