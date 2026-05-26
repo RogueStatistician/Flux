@@ -189,11 +189,15 @@ export function createFieldMapping(
   mapNodeId?: string
 ) {
   const db = getDb()
-  // Remove any existing mapping for the same target field, scoped to the same MapNode
-  // (or to legacy null-scoped mappings when mapNodeId is absent).
+  // Remove any existing mapping for the same target field.
+  // When saving a node-scoped mapping: delete both the old node-scoped version AND any
+  // legacy null-scoped orphan for this field. Null-scoped mappings pre-date the MapNode
+  // feature (migration V5) and accumulate as orphans when a project is upgraded — leaving
+  // them in place causes the engine's legacy fallback path to pick up stale rules
+  // nondeterministically (last SQL row wins with no ORDER BY).
   if (mapNodeId) {
     db.prepare(
-      'DELETE FROM field_mappings WHERE transformation_id = ? AND target_field_id = ? AND map_node_id = ?'
+      'DELETE FROM field_mappings WHERE transformation_id = ? AND target_field_id = ? AND (map_node_id = ? OR map_node_id IS NULL)'
     ).run(transformationId, targetFieldId, mapNodeId)
   } else {
     db.prepare(
@@ -241,7 +245,7 @@ export function deleteFieldMappingsByTarget(transformationId: string, targetObje
 export function getFieldMappings(transformationId: string) {
   const db = getDb()
   const rows = db.prepare(
-    'SELECT * FROM field_mappings WHERE transformation_id = ?'
+    'SELECT * FROM field_mappings WHERE transformation_id = ? ORDER BY id ASC'
   ).all(transformationId) as FieldMappingRow[]
   return rows.map(rowToFieldMapping)
 }

@@ -118,6 +118,6 @@ function serveIndex(_req: express.Request, res: express.Response) {
 
 app.get('/{*path}', serveIndex)
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Flux web server running at http://localhost:${PORT}`)
 })
