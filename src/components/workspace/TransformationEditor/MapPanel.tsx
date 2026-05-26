@@ -27,7 +27,7 @@ type ConcatPart =
 // ── Per-rule-type config editors ──────────────────────────────────────────────
 
 function DirectEditor({
-  config, onChange, upstreamSourceIds, sourceObjects, fieldsMap, sourceGroupLabels,
+  config, onChange, upstreamSourceIds, sourceObjects, fieldsMap, sourceGroupLabels, targetField,
 }: {
   config: Record<string, unknown>
   onChange: (c: Record<string, unknown>) => void
@@ -35,34 +35,25 @@ function DirectEditor({
   sourceObjects: DataObject[]
   fieldsMap: Record<string, ObjectField[]>
   sourceGroupLabels?: Record<string, string>
+  targetField?: ObjectField
 }) {
   const val = config.sourceObjectId
     ? encodeField(config.sourceObjectId as string, (config.sourceFieldName as string) ?? '')
     : ''
 
-  // Detect whether the currently selected source field is a picklist
-  const sourceField = (config.sourceObjectId && config.sourceFieldName)
-    ? fieldsMap[config.sourceObjectId as string]?.find(f => f.name === (config.sourceFieldName as string))
-    : undefined
-  const isPicklistField = sourceField?.dataType === 'picklist' && !!sourceField.picklistId
+  // Show key/label toggle when the TARGET field is a picklist — the raw source value
+  // is treated as a target picklist key; the user chooses whether to output the key
+  // as-is or resolve it to its display label.
+  const targetIsPicklist = targetField?.dataType === 'picklist' && !!targetField.picklistId
   const extractMode = (config.extractMode as 'key' | 'label') ?? 'key'
 
   const handleFieldChange = (v: string | undefined) => {
     if (!v) { onChange({}); return }
-    const decoded = decodeField(v)
-    const newField = fieldsMap[decoded.sourceObjectId]?.find(f => f.name === decoded.sourceFieldName)
-    const newIsPicklist = newField?.dataType === 'picklist' && !!newField.picklistId
-    onChange({
-      ...decoded,
-      ...(newIsPicklist
-        ? { extractMode: 'key', sourcePicklistId: newField!.picklistId }
-        : { extractMode: undefined, sourcePicklistId: undefined }
-      ),
-    })
+    onChange(decodeField(v))
   }
 
   const handleExtractMode = (mode: 'key' | 'label') => {
-    onChange({ ...config, extractMode: mode, sourcePicklistId: sourceField!.picklistId })
+    onChange({ ...config, extractMode: mode, targetPicklistId: targetField!.picklistId })
   }
 
   return (
@@ -75,9 +66,9 @@ function DirectEditor({
         sourceGroupLabels={sourceGroupLabels}
         onChange={handleFieldChange}
       />
-      {isPicklistField && (
+      {targetIsPicklist && (
         <div className="flex items-center gap-4 text-xs text-gray-600 pl-0.5">
-          <span className="text-gray-400">Extract:</span>
+          <span className="text-gray-400">Output:</span>
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input
               type="radio"
@@ -957,7 +948,7 @@ export function MapPanel({
                     )}
                     {rule.ruleType === 'direct' && (
                       <>
-                        <DirectEditor config={rule.config} onChange={c => setFieldRule(field.id, { config: c })} {...sharedEditorProps} />
+                        <DirectEditor config={rule.config} onChange={c => setFieldRule(field.id, { config: c })} targetField={field} {...sharedEditorProps} />
                         <PicklistMappingHint
                           targetField={field}
                           sourceObjectId={(rule.config as Record<string, unknown>).sourceObjectId as string | undefined}

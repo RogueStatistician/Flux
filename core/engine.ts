@@ -179,13 +179,15 @@ function sendProgress(runId: string, payload: Record<string, unknown>): void {
 // ── Rule applicators ──────────────────────────────────────────────────────────
 
 export function applyDirect(
-  cfg: { sourceFieldName: string; extractMode?: 'key' | 'label'; sourcePicklistId?: string },
+  cfg: { sourceFieldName: string; extractMode?: 'key' | 'label'; targetPicklistId?: string },
   row: Record<string, string>,
   picklistMaps?: Map<string, Map<string, string>>,
 ): string {
   const raw = row[cfg.sourceFieldName] ?? ''
-  if (cfg.extractMode === 'label' && cfg.sourcePicklistId && picklistMaps) {
-    return picklistMaps.get(cfg.sourcePicklistId)?.get(raw) ?? raw
+  // When extractMode === 'label', treat the raw source value as a target picklist key
+  // and return the corresponding label. Falls back to the raw value if not found.
+  if (cfg.extractMode === 'label' && cfg.targetPicklistId && picklistMaps) {
+    return picklistMaps.get(cfg.targetPicklistId)?.get(raw) ?? raw
   }
   return raw
 }
@@ -971,10 +973,11 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
         const cfg = JSON.parse(m.rule_config) as {
           picklistMappingId?: string
           extractMode?: string
-          sourcePicklistId?: string
+          targetPicklistId?: string
         }
         if (cfg.picklistMappingId) loadMappingEntries(cfg.picklistMappingId)
-        if (cfg.extractMode === 'label' && cfg.sourcePicklistId) loadPicklistLabels(cfg.sourcePicklistId)
+        // Pre-load the target picklist key→label map for extractMode === 'label'
+        if (cfg.extractMode === 'label' && cfg.targetPicklistId) loadPicklistLabels(cfg.targetPicklistId)
       }
     } catch {
       // Malformed rule_config — skip picklist pre-load for this mapping
