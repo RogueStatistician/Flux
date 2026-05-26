@@ -84,14 +84,14 @@ export function getRunIssues(runId: string, severity?: string) {
 /** Return the first `limit` rows of an output file for preview. */
 export async function previewOutput(runId: string, targetObjectId: string, limit = 100) {
   const db = getDb()
-  const row = db.prepare('SELECT output_manifest FROM runs WHERE id = ?').get(runId) as
+  const runRow = db.prepare('SELECT output_manifest FROM runs WHERE id = ?').get(runId) as
     | { output_manifest: string | null }
     | undefined
-  if (!row?.output_manifest) throw new Error('No output manifest for this run.')
+  if (!runRow?.output_manifest) throw new Error('No output manifest for this run.')
 
   let manifest: { targets: Array<{ objectId: string; filePath: string; format: string }> }
   try {
-    manifest = JSON.parse(row.output_manifest) as typeof manifest
+    manifest = JSON.parse(runRow.output_manifest) as typeof manifest
   } catch {
     throw new Error('Output manifest is corrupted. Re-run the transformation.')
   }
@@ -99,18 +99,28 @@ export async function previewOutput(runId: string, targetObjectId: string, limit
   if (!target) throw new Error('Target not found in manifest.')
   if (!fs.existsSync(target.filePath)) throw new Error('Output file has been cleaned up. Re-run the transformation.')
 
+  // Look up the target object to determine where headers and data rows live in the output file.
+  // Template-based outputs preserve preamble rows from the original template, so row 0 of the
+  // file is NOT necessarily the header row.
+  const objRow = db.prepare(
+    'SELECT template_header_row, template_data_start_row FROM data_objects WHERE id = ?'
+  ).get(targetObjectId) as { template_header_row: number | null; template_data_start_row: number | null } | undefined
+
+  // 0-based offsets: headerRow defaults to 0 (first row), dataStartRow defaults to headerRow + 1
+  const headerRow    = objRow?.template_header_row    ?? 0
+  const dataStartRow = objRow?.template_data_start_row ?? (headerRow + 1)
+
   let headers: string[]
-  let allDataRows: Record<string, string>[]
+  let dataRows: string[][]
 
   if (target.format === 'csv') {
     const content = fs.readFileSync(target.filePath, 'utf-8')
+    // CSV output is always written by the engine with headers in row 0, data from row 1.
     const parsed = csvParseSync(content, {
       skip_empty_lines: true, relax_quotes: true, relax_column_count: true, cast: false,
     }) as string[][]
-    headers = (parsed[0] ?? []).map(h => String(h ?? '').trim())
-    allDataRows = parsed.slice(1).map(row =>
-      Object.fromEntries(headers.map((h, i) => [h, String(row[i] ?? '')]))
-    )
+    headers  = (parsed[0] ?? []).map(h => String(h ?? '').trim())
+    dataRows = parsed.slice(1)
   } else {
     const buf = fs.readFileSync(target.filePath)
     const wb = new ExcelJS.Workbook()
@@ -118,9 +128,12 @@ export async function previewOutput(runId: string, targetObjectId: string, limit
     await wb.xlsx.load(buf as any)
     const ws = wb.getWorksheet(1)
     if (!ws) return { headers: [], rows: [], totalRows: 0 }
+
+    // Use includeEmpty:true so every row has a stable position in rawRows (row N in the
+    // workbook = rawRows[N-1], no preamble skipping surprises).
     const rawRows: string[][] = []
-    ws.eachRow({ includeEmpty: false }, row => {
-      const vals = (row.values as (ExcelJS.CellValue | undefined)[]).slice(1)
+    ws.eachRow({ includeEmpty: true }, excelRow => {
+      const vals = (excelRow.values as (ExcelJS.CellValue | undefined)[]).slice(1)
       rawRows.push(vals.map(v => {
         if (v === null || v === undefined) return ''
         if (v instanceof Date) return v.toISOString().split('T')[0]
@@ -132,20 +145,20 @@ export async function previewOutput(runId: string, targetObjectId: string, limit
         return String(v)
       }))
     })
-    headers = (rawRows[0] ?? []).map(h => String(h ?? '').trim())
-    allDataRows = rawRows.slice(1).map(row =>
-      Object.fromEntries(headers.map((h, i) => [h, String(row[i] ?? '')]))
-    )
+
+    headers  = (rawRows[headerRow] ?? []).map(h => String(h ?? '').trim())
+    dataRows = rawRows.slice(dataStartRow)
   }
 
-  const previewRows = allDataRows.slice(0, limit)
-  // Use numeric index keys so duplicate/empty column names don't collide in the row objects
-  const rows = previewRows.map(r => {
+  // Build rows using column index as key — safe against duplicate or empty header names.
+  const slicedDataRows = dataRows.slice(0, limit)
+  const rows = slicedDataRows.map(dataRow => {
     const out: Record<string, string> = {}
-    headers.forEach((h, i) => { out[String(i)] = r[h] ?? '' })
+    headers.forEach((_h, i) => { out[String(i)] = String(dataRow[i] ?? '') })
     return out
   })
-  return { headers, rows, totalRows: allDataRows.length }
+
+  return { headers, rows, totalRows: dataRows.length }
 }
 
 /** Copy an output file to a user-chosen destination path. */

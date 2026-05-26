@@ -997,16 +997,52 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
     // Build the list of (mapNodeId, rules) paths.
     // With canvas MapNodes: each MapNode is an independent path with scoped rules.
     // Legacy (no canvas / no MapNodes found): merge all rules into one path.
+    //
+    // Null-scoped (legacy) mappings are always merged into every path so that
+    // pre-V5 projects (where map_node_id was NULL) continue to work after the
+    // first node-scoped mapping is added for a subset of fields.  The
+    // fmByFieldId build step below already prefers node-scoped over null-scoped
+    // for the same field, so merging is safe.
+    const nullScopedMappings = byNode.get(null) ?? []
     const paths: Array<{ mapNodeId: string | null; mappings: FieldMappingRow[] }> = []
     if (canvasMapNodeIds.length > 0) {
       for (const mapNodeId of canvasMapNodeIds) {
-        const mappings = byNode.get(mapNodeId) ??
-          (mapNodeId === `map-${targetObjectId}` ? byNode.get(null) ?? [] : [])
+        const nodeScoped = byNode.get(mapNodeId) ?? []
+        // Merge: node-scoped rules take priority (handled by fmByFieldId dedup);
+        // null-scoped fill any fields not yet covered by a node-scoped rule.
+        const mappings = nodeScoped.length > 0
+          ? [...nodeScoped, ...nullScopedMappings]
+          : nullScopedMappings
         paths.push({ mapNodeId, mappings })
       }
     } else {
       paths.push({ mapNodeId: null, mappings: [...byNode.values()].flat() })
     }
+
+    // ── DIAGNOSTIC: show all DB keys for this target ─────────────────────────
+    {
+      const diagLines: string[] = []
+      diagLines.push(`[FLUX-DIAG2] target="${targetObj.name}" (${targetObjectId})`)
+      diagLines.push(`  total mappingRows in DB for transformation: ${mappingRows.length}`)
+      diagLines.push(`  all mappingRows for THIS target:`)
+      for (const m of mappingRows.filter(m => m.target_object_id === targetObjectId)) {
+        diagLines.push(`    field_id=${m.target_field_id} rule=${m.rule_type} map_node_id=${m.map_node_id ?? 'null'}`)
+      }
+      diagLines.push(`  canvasMapNodeIds: ${JSON.stringify(canvasMapNodeIds)}`)
+      diagLines.push(`  byNode keys for this target:`)
+      for (const [k, v] of byNode) {
+        diagLines.push(`    key=${k ?? 'null'} → ${v.length} mappings`)
+      }
+      diagLines.push(`  paths resolved:`)
+      for (const p of paths) {
+        diagLines.push(`    mapNodeId=${p.mapNodeId ?? 'null'} → ${p.mappings.length} mappings`)
+      }
+      const diagPath = path.join(getEngineConfig().tempDir, `flux-diag2-${runId}.txt`)
+      fs.mkdirSync(getEngineConfig().tempDir, { recursive: true })
+      fs.appendFileSync(diagPath, diagLines.join('\n') + '\n')
+      console.log(`[FLUX-DIAG2] wrote to ${diagPath}`)
+    }
+    // ── END DIAGNOSTIC ───────────────────────────────────────────────────────
 
     sendProgress(runId, { status: 'running', phase: 'processing', currentTarget: targetObj.name, rowsDone: 0, rowsTotal: 0 })
 
@@ -1068,29 +1104,6 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       }
 
       if (sourceRows.length === 0) sourceRows = [{}]
-
-      // ── DIAGNOSTIC: log mapping coverage on first path of first row ──────────
-      if (outputRows.length === 0) {
-        const diagLines: string[] = []
-        diagLines.push(`[FLUX-DIAG] target="${targetObj.name}" mapNodeId=${mapNodeId ?? 'null'} sourceRows=${sourceRows.length} mappings=${mappings.length} fmByFieldId.size=${fmByFieldId.size}`)
-        for (const tf of targetFields) {
-          const fm = fmByFieldId.get(tf.id)
-          if (fm) {
-            diagLines.push(`  FOUND  field="${tf.name}" id=${tf.id} rule=${fm.rule_type} map_node_id=${fm.map_node_id ?? 'null'} config=${fm.rule_config}`)
-          } else {
-            diagLines.push(`  MISS   field="${tf.name}" id=${tf.id}`)
-          }
-        }
-        diagLines.push(`  -- raw mappings in fmByFieldId:`)
-        for (const [fid, fm] of fmByFieldId) {
-          diagLines.push(`    target_field_id=${fid} rule=${fm.rule_type} map_node_id=${fm.map_node_id ?? 'null'}`)
-        }
-        const diagPath = path.join(getEngineConfig().tempDir, `flux-diag-${runId}.txt`)
-        fs.mkdirSync(getEngineConfig().tempDir, { recursive: true })
-        fs.appendFileSync(diagPath, diagLines.join('\n') + '\n')
-        console.log(`[FLUX-DIAG] wrote diagnostics to ${diagPath}`)
-      }
-      // ── END DIAGNOSTIC ───────────────────────────────────────────────────────
 
       for (let i = 0; i < sourceRows.length; i++) {
         if (runState.cancelled) break

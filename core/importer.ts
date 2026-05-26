@@ -1,9 +1,10 @@
 /**
  * importer.ts — file parsing and schema inference for Excel / CSV uploads.
- * Uses ExcelJS for .xlsx/.xls files and csv-parse for .csv/.tsv/.txt files.
+ * Uses SheetJS (xlsx) for legacy .xls, ExcelJS for .xlsx, csv-parse for CSV.
  * All parse functions are async.
  */
 import ExcelJS from 'exceljs'
+import * as XLSX from 'xlsx'
 import { parse as csvParseSync } from 'csv-parse/sync'
 import fs from 'fs'
 
@@ -79,6 +80,7 @@ function cellToString(v: ExcelJS.CellValue): string {
 /** Read all rows from the first sheet of a file as a 2-D string array. */
 async function readRawRows(filePath: string, separator?: string): Promise<string[][]> {
   const isCsv = /\.(csv|tsv|txt)$/i.test(filePath)
+  const isLegacyXls = /\.xls$/i.test(filePath)  // .xls (not .xlsx)
 
   if (isCsv) {
     const content = fs.readFileSync(filePath, 'utf-8')
@@ -93,6 +95,18 @@ async function readRawRows(filePath: string, separator?: string): Promise<string
     return parsed
   }
 
+  if (isLegacyXls) {
+    // ExcelJS cannot read binary .xls format — use SheetJS instead
+    const buf = fs.readFileSync(filePath)
+    const wb = XLSX.read(buf, { type: 'buffer', cellText: true, cellDates: false })
+    const sheetName = wb.SheetNames[0]
+    if (!sheetName) return []
+    const ws = wb.Sheets[sheetName]
+    const raw = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: '', raw: false }) as string[][]
+    return raw
+  }
+
+  // .xlsx — use ExcelJS (better formula result handling)
   const buf = fs.readFileSync(filePath)
   const wb = new ExcelJS.Workbook()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
