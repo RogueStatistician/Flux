@@ -1026,7 +1026,7 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       diagLines.push(`  total mappingRows in DB for transformation: ${mappingRows.length}`)
       diagLines.push(`  all mappingRows for THIS target:`)
       for (const m of mappingRows.filter(m => m.target_object_id === targetObjectId)) {
-        diagLines.push(`    field_id=${m.target_field_id} rule=${m.rule_type} map_node_id=${m.map_node_id ?? 'null'}`)
+        diagLines.push(`    field_id=${m.target_field_id} rule=${m.rule_type} map_node_id=${m.map_node_id ?? 'null'} config=${m.rule_config}`)
       }
       diagLines.push(`  canvasMapNodeIds: ${JSON.stringify(canvasMapNodeIds)}`)
       diagLines.push(`  byNode keys for this target:`)
@@ -1110,6 +1110,17 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
         const srcRow = sourceRows[i]
         if (filterConditions.length > 0 && !filterConditions.every(c => evaluateFilterCondition(c, srcRow))) continue
 
+        // ── DIAG: log field lookups on row 0 ──────────────────────────────────
+        if (i === 0 && outputRows.length === 0) {
+          const diagPath = path.join(getEngineConfig().tempDir, `flux-diag2-${runId}.txt`)
+          const lines: string[] = [`[FLUX-DIAG2] processing row 0: fmByFieldId.size=${fmByFieldId.size} targetFields.count=${targetFields.length}`]
+          for (const tf of targetFields) {
+            const fm = fmByFieldId.get(tf.id)
+            lines.push(`  field=${tf.name} id=${tf.id} → ${fm ? `rule=${fm.rule_type} config=${fm.rule_config}` : 'MISS'}`)
+          }
+          fs.appendFileSync(diagPath, lines.join('\n') + '\n')
+        }
+        // ── END DIAG ──────────────────────────────────────────────────────────
         const outRow: Record<string, string> = {}
         for (const tf of targetFields) {
           const fm = fmByFieldId.get(tf.id)
@@ -1163,6 +1174,14 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
     }
 
     totalRowsProcessed += outputRows.length
+
+    // ── DIAGNOSTIC: show first output row content ──────────────────────────────
+    {
+      const diagPath = path.join(getEngineConfig().tempDir, `flux-diag2-${runId}.txt`)
+      const diagLine = `[FLUX-DIAG2] outputRows.length=${outputRows.length} first=${JSON.stringify(outputRows[0] ?? null)}\n`
+      fs.appendFileSync(diagPath, diagLine)
+    }
+    // ── END DIAGNOSTIC ────────────────────────────────────────────────────────
 
     // ── Write output file ─────────────────────────────────────────────────────
 
