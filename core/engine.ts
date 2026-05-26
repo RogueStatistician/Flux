@@ -179,17 +179,10 @@ function sendProgress(runId: string, payload: Record<string, unknown>): void {
 // ── Rule applicators ──────────────────────────────────────────────────────────
 
 export function applyDirect(
-  cfg: { sourceFieldName: string; extractMode?: 'key' | 'label'; targetPicklistId?: string },
+  cfg: { sourceFieldName: string },
   row: Record<string, string>,
-  picklistMaps?: Map<string, Map<string, string>>,
 ): string {
-  const raw = row[cfg.sourceFieldName] ?? ''
-  // When extractMode === 'label', treat the raw source value as a target picklist key
-  // and return the corresponding label. Falls back to the raw value if not found.
-  if (cfg.extractMode === 'label' && cfg.targetPicklistId && picklistMaps) {
-    return picklistMaps.get(cfg.targetPicklistId)?.get(raw) ?? raw
-  }
-  return raw
+  return row[cfg.sourceFieldName] ?? ''
 }
 
 export function applyConstant(cfg: { value: string }): string {
@@ -1168,9 +1161,17 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
             const cfg = JSON.parse(fm.rule_config)
             switch (fm.rule_type) {
               case 'direct': {
-                const raw = applyDirect(cfg, srcRow, picklistMaps)
+                // Step 1: raw source value
+                const raw = applyDirect(cfg, srcRow)
+                // Step 2: translate source_key → target_key via picklist mapping (left join)
                 const mid = (cfg as { picklistMappingId?: string }).picklistMappingId
-                value = mid ? (picklistMaps.get(mid)?.get(raw) ?? raw) : raw
+                const targetKey = mid ? (picklistMaps.get(mid)?.get(raw) ?? raw) : raw
+                // Step 3: optionally resolve target_key → label via target picklist (left join)
+                const { extractMode, targetPicklistId } =
+                  cfg as { extractMode?: string; targetPicklistId?: string }
+                value = (extractMode === 'label' && targetPicklistId)
+                  ? (picklistMaps.get(targetPicklistId)?.get(targetKey) ?? targetKey)
+                  : targetKey
                 break
               }
               case 'constant':           value = applyConstant(cfg); break
