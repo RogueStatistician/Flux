@@ -125,6 +125,7 @@ export function PLMappingsView() {
   const [creating, setCreating] = useState(false)
   const [bulkResult, setBulkResult] = useState<BulkMappingResult | null>(null)
   const [bulkImporting, setBulkImporting] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const load = useCallback(async () => {
     const [all, pls] = await Promise.all([
@@ -188,6 +189,21 @@ export function PLMappingsView() {
     }
   }
 
+  const handleExport = async () => {
+    const res = await platform.saveFile({
+      title: 'Export picklist mappings',
+      defaultPath: 'picklist-mappings.xlsx',
+      filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+    })
+    if (res.canceled || !res.filePath) return
+    setExporting(true)
+    try {
+      await platform.exportPlMappingsToFile(res.filePath)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Top bar */}
@@ -199,6 +215,14 @@ export function PLMappingsView() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            className="text-sm text-gray-500 hover:text-gray-700 disabled:opacity-40"
+            title="Export all mappings to an Excel file (one sheet per mapping)"
+          >
+            {exporting ? '…' : '↓ Export'}
+          </button>
           <button
             onClick={handleBulkImport}
             disabled={bulkImporting}

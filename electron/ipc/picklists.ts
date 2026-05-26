@@ -1,10 +1,12 @@
 /**
  * Picklists IPC handlers — thin Electron wrapper around core/services/picklists.ts.
  */
+import fs from 'fs'
 import { ipcMain } from 'electron'
 import {
   createPicklist, listPicklists, getPicklist, updatePicklist, deletePicklist,
   setPicklistValues, importPicklistFromFile, bulkImportPicklistsFromFile,
+  exportPicklistsToBuffer,
 } from '../../core/services/picklists.js'
 
 export function registerPicklistHandlers(): void {
@@ -16,4 +18,8 @@ export function registerPicklistHandlers(): void {
   ipcMain.handle('picklists:setValues', async (_e, id: string, values: Array<{ key: string; label?: string }>) => setPicklistValues(id, values))
   ipcMain.handle('picklists:importFromFile', async (_e, id: string, filePath: string, keyCol: string, labelCol?: string) => importPicklistFromFile(id, filePath, keyCol, labelCol))
   ipcMain.handle('picklists:bulkImportFromFile', async (_e, filePath: string, side: 'source' | 'target') => bulkImportPicklistsFromFile(filePath, side))
+  ipcMain.handle('picklists:exportToFile', async (_e, destPath: string, side?: 'source' | 'target') => {
+    const buf = await exportPicklistsToBuffer(side)
+    fs.writeFileSync(destPath, buf)
+  })
 }

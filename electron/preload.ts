@@ -101,6 +101,9 @@ const electronAPI = {
   bulkImportPicklistsFromFile: (filePath: string, side: 'source' | 'target') =>
     ipcRenderer.invoke('picklists:bulkImportFromFile', filePath, side),
 
+  exportPicklistsToFile: (destPath: string, side?: 'source' | 'target') =>
+    ipcRenderer.invoke('picklists:exportToFile', destPath, side),
+
   // ── Picklist Mappings ──────────────────────────────────────────────────────
   createPlMapping: (name: string, sourcePicklistId?: string, targetPicklistId?: string) =>
     ipcRenderer.invoke('plmappings:create', name, sourcePicklistId, targetPicklistId),
@@ -125,6 +128,9 @@ const electronAPI = {
 
   bulkImportPlMappingsFromFile: (filePath: string) =>
     ipcRenderer.invoke('plmappings:bulkImportFromFile', filePath),
+
+  exportPlMappingsToFile: (destPath: string) =>
+    ipcRenderer.invoke('plmappings:exportToFile', destPath),
 
   // ── Transformations ────────────────────────────────────────────────────────
   createTransformation: (name: string, description?: string) =>

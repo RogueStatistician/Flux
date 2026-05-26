@@ -1,6 +1,7 @@
 /**
  * Picklists service — CRUD for picklists + picklist_values.
  */
+import ExcelJS from 'exceljs'
 import { getDb } from '../db.js'
 import { parseFile, parseAllSheets } from '../importer.js'
 
@@ -237,4 +238,37 @@ export async function bulkImportPicklistsFromFile(filePath: string, side: 'sourc
   }
 
   return { results, errors }
+}
+
+/**
+ * Export all picklists (optionally filtered by side) to an Excel buffer.
+ * One sheet per picklist, columns: key, label — matches bulk-import format.
+ */
+export async function exportPicklistsToBuffer(side?: 'source' | 'target'): Promise<Buffer> {
+  const db = getDb()
+  const projectId = getProjectId()
+
+  const lists = side
+    ? (db.prepare('SELECT * FROM picklists WHERE project_id = ? AND side = ? ORDER BY name ASC').all(projectId, side) as PicklistRow[])
+    : (db.prepare('SELECT * FROM picklists WHERE project_id = ? ORDER BY name ASC').all(projectId) as PicklistRow[])
+
+  const wb = new ExcelJS.Workbook()
+
+  for (const pl of lists) {
+    const values = db.prepare(
+      'SELECT * FROM picklist_values WHERE picklist_id = ? ORDER BY position ASC'
+    ).all(pl.id) as PicklistValueRow[]
+
+    const sheetName = pl.name.slice(0, 31)
+    const ws = wb.addWorksheet(sheetName)
+    ws.addRow(['key', 'label'])
+    for (const v of values) {
+      ws.addRow([v.key, v.label ?? ''])
+    }
+  }
+
+  // Add a blank sheet so the workbook is valid even when there are no picklists
+  if (lists.length === 0) wb.addWorksheet('Sheet1')
+
+  return Buffer.from(await wb.xlsx.writeBuffer() as ArrayBuffer)
 }

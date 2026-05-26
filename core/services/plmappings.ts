@@ -1,6 +1,7 @@
 /**
  * Picklist Mappings service — CRUD for picklist_mappings + picklist_mapping_entries.
  */
+import ExcelJS from 'exceljs'
 import { getDb } from '../db.js'
 import { parseFile, parseAllSheets } from '../importer.js'
 
@@ -240,4 +241,36 @@ export async function bulkImportPlMappingsFromFile(filePath: string) {
   }
 
   return { results, errors }
+}
+
+/**
+ * Export all picklist mappings to an Excel buffer.
+ * One sheet per mapping, columns: source_key, target_key — matches bulk-import format.
+ */
+export async function exportPlMappingsToBuffer(): Promise<Buffer> {
+  const db = getDb()
+  const projectId = getProjectId()
+
+  const mappings = db.prepare(
+    'SELECT * FROM picklist_mappings WHERE project_id = ? ORDER BY name ASC'
+  ).all(projectId) as MappingRow[]
+
+  const wb = new ExcelJS.Workbook()
+
+  for (const m of mappings) {
+    const entries = db.prepare(
+      'SELECT * FROM picklist_mapping_entries WHERE mapping_id = ?'
+    ).all(m.id) as EntryRow[]
+
+    const sheetName = m.name.slice(0, 31)
+    const ws = wb.addWorksheet(sheetName)
+    ws.addRow(['source_key', 'target_key'])
+    for (const e of entries) {
+      ws.addRow([e.source_key, e.target_key])
+    }
+  }
+
+  if (mappings.length === 0) wb.addWorksheet('Sheet1')
+
+  return Buffer.from(await wb.xlsx.writeBuffer() as ArrayBuffer)
 }

@@ -179,10 +179,15 @@ function sendProgress(runId: string, payload: Record<string, unknown>): void {
 // ── Rule applicators ──────────────────────────────────────────────────────────
 
 export function applyDirect(
-  cfg: { sourceFieldName: string },
+  cfg: { sourceFieldName: string; extractMode?: 'key' | 'label'; sourcePicklistId?: string },
   row: Record<string, string>,
+  picklistMaps?: Map<string, Map<string, string>>,
 ): string {
-  return row[cfg.sourceFieldName] ?? ''
+  const raw = row[cfg.sourceFieldName] ?? ''
+  if (cfg.extractMode === 'label' && cfg.sourcePicklistId && picklistMaps) {
+    return picklistMaps.get(cfg.sourcePicklistId)?.get(raw) ?? raw
+  }
+  return raw
 }
 
 export function applyConstant(cfg: { value: string }): string {
@@ -931,28 +936,48 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
     byNode.get(key)!.push(m)
   }
 
-  // Pre-load any picklist maps needed (for picklisttranslate and direct rules with picklistMappingId)
+  // Pre-load picklist maps needed at run time:
+  //   • picklisttranslate rules → target picklist mapping (source_key → target_key)
+  //   • direct rules with picklistMappingId → target picklist mapping
+  //   • direct rules with extractMode === 'label' → source picklist (key → label)
   const picklistMaps = new Map<string, Map<string, string>>()
+
+  const loadMappingEntries = (mid: string) => {
+    if (picklistMaps.has(mid)) return
+    const entries = db.prepare(
+      'SELECT source_key, target_key FROM picklist_mapping_entries WHERE mapping_id = ?'
+    ).all(mid) as { source_key: string; target_key: string }[]
+    const map = new Map<string, string>()
+    for (const e of entries) map.set(e.source_key, e.target_key)
+    picklistMaps.set(mid, map)
+  }
+
+  const loadPicklistLabels = (plId: string) => {
+    if (picklistMaps.has(plId)) return
+    const vals = db.prepare(
+      'SELECT key, label FROM picklist_values WHERE picklist_id = ? ORDER BY position ASC'
+    ).all(plId) as { key: string; label: string | null }[]
+    const map = new Map<string, string>()
+    for (const v of vals) map.set(v.key, v.label ?? v.key)
+    picklistMaps.set(plId, map)
+  }
+
   for (const m of mappingRows) {
-    let mid: string | undefined
     try {
       if (m.rule_type === 'picklisttranslate') {
         const cfg = JSON.parse(m.rule_config) as { mappingId?: string }
-        mid = cfg.mappingId
+        if (cfg.mappingId) loadMappingEntries(cfg.mappingId)
       } else if (m.rule_type === 'direct') {
-        const cfg = JSON.parse(m.rule_config) as { picklistMappingId?: string }
-        mid = cfg.picklistMappingId
+        const cfg = JSON.parse(m.rule_config) as {
+          picklistMappingId?: string
+          extractMode?: string
+          sourcePicklistId?: string
+        }
+        if (cfg.picklistMappingId) loadMappingEntries(cfg.picklistMappingId)
+        if (cfg.extractMode === 'label' && cfg.sourcePicklistId) loadPicklistLabels(cfg.sourcePicklistId)
       }
     } catch {
       // Malformed rule_config — skip picklist pre-load for this mapping
-    }
-    if (mid && !picklistMaps.has(mid)) {
-      const entries = db.prepare(
-        'SELECT source_key, target_key FROM picklist_mapping_entries WHERE mapping_id = ?'
-      ).all(mid) as { source_key: string; target_key: string }[]
-      const map = new Map<string, string>()
-      for (const e of entries) map.set(e.source_key, e.target_key)
-      picklistMaps.set(mid, map)
     }
   }
 
@@ -1140,7 +1165,7 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
             const cfg = JSON.parse(fm.rule_config)
             switch (fm.rule_type) {
               case 'direct': {
-                const raw = applyDirect(cfg, srcRow)
+                const raw = applyDirect(cfg, srcRow, picklistMaps)
                 const mid = (cfg as { picklistMappingId?: string }).picklistMappingId
                 value = mid ? (picklistMaps.get(mid)?.get(raw) ?? raw) : raw
                 break

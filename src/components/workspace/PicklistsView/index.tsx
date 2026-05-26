@@ -126,6 +126,7 @@ function PicklistColumn({
   const [newDesc, setNewDesc] = useState('')
   const [creating, setCreating] = useState(false)
   const [bulkImporting, setBulkImporting] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const isSource = side === 'source'
   const accent = isSource ? 'blue' : 'emerald'
@@ -160,6 +161,21 @@ function PicklistColumn({
     }
   }
 
+  const handleExport = async () => {
+    const res = await platform.saveFile({
+      title: `Export ${side} picklists`,
+      defaultPath: `${side}-picklists.xlsx`,
+      filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+    })
+    if (res.canceled || !res.filePath) return
+    setExporting(true)
+    try {
+      await platform.exportPicklistsToFile(res.filePath, side)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="flex-1 flex flex-col min-w-0 border-r last:border-r-0 border-gray-100">
       {/* Column header */}
@@ -171,6 +187,14 @@ function PicklistColumn({
           <p className="text-xs text-gray-400 mt-0.5">{picklists.length} list{picklists.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            className="text-xs text-gray-500 hover:text-gray-700 disabled:opacity-40"
+            title="Export all picklists to an Excel file (one sheet per picklist)"
+          >
+            {exporting ? '…' : '↓ Export'}
+          </button>
           <button
             onClick={handleBulkImport}
             disabled={bulkImporting}

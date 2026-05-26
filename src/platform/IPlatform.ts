@@ -85,6 +85,7 @@ export interface IPlatform {
     results: Array<{ name: string; created: boolean; valueCount: number }>
     errors: Array<{ name: string; error: string }>
   }>
+  exportPicklistsToFile(destPath: string, side?: 'source' | 'target'): Promise<void>
 
   // ── Picklist Mappings ──────────────────────────────────────────────────────
   createPlMapping(name: string, sourcePicklistId?: string, targetPicklistId?: string): Promise<PicklistMapping>
@@ -98,6 +99,7 @@ export interface IPlatform {
     results: Array<{ name: string; created: boolean; entryCount: number }>
     errors: Array<{ name: string; error: string }>
   }>
+  exportPlMappingsToFile(destPath: string): Promise<void>
 
   // ── Transformations ────────────────────────────────────────────────────────
   createTransformation(name: string, description?: string): Promise<Transformation>

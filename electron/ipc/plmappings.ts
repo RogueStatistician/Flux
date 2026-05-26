@@ -1,10 +1,12 @@
 /**
  * Picklist Mappings IPC handlers — thin Electron wrapper around core/services/plmappings.ts.
  */
+import fs from 'fs'
 import { ipcMain } from 'electron'
 import {
   createPlMapping, listPlMappings, getPlMapping, updatePlMapping, deletePlMapping,
   setPlMappingEntries, importPlMappingEntriesFromFile, bulkImportPlMappingsFromFile,
+  exportPlMappingsToBuffer,
 } from '../../core/services/plmappings.js'
 
 export function registerPlMappingHandlers(): void {
@@ -16,4 +18,8 @@ export function registerPlMappingHandlers(): void {
   ipcMain.handle('plmappings:setEntries', async (_e, id: string, entries: Array<{ sourceKey: string; targetKey: string }>) => setPlMappingEntries(id, entries))
   ipcMain.handle('plmappings:importEntriesFromFile', async (_e, id: string, filePath: string, sourceKeyCol: string, targetKeyCol: string) => importPlMappingEntriesFromFile(id, filePath, sourceKeyCol, targetKeyCol))
   ipcMain.handle('plmappings:bulkImportFromFile', async (_e, filePath: string) => bulkImportPlMappingsFromFile(filePath))
+  ipcMain.handle('plmappings:exportToFile', async (_e, destPath: string) => {
+    const buf = await exportPlMappingsToBuffer()
+    fs.writeFileSync(destPath, buf)
+  })
 }

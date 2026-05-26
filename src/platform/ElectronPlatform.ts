@@ -38,6 +38,7 @@ export class ElectronPlatform implements IPlatform {
   setPicklistValues(id: string, values: Parameters<typeof window.electronAPI.setPicklistValues>[1]) { return window.electronAPI.setPicklistValues(id, values) }
   importPicklistFromFile(id: string, filePath: string, keyCol: string, labelCol?: string) { return window.electronAPI.importPicklistFromFile(id, filePath, keyCol, labelCol) }
   bulkImportPicklistsFromFile(filePath: string, side: 'source' | 'target') { return window.electronAPI.bulkImportPicklistsFromFile(filePath, side) }
+  exportPicklistsToFile(destPath: string, side?: 'source' | 'target') { return window.electronAPI.exportPicklistsToFile(destPath, side) }
 
   // ── Picklist Mappings ────────────────────────────────────────────────────
   createPlMapping(name: string, sourcePicklistId?: string, targetPicklistId?: string) { return window.electronAPI.createPlMapping(name, sourcePicklistId, targetPicklistId) }
@@ -48,6 +49,7 @@ export class ElectronPlatform implements IPlatform {
   setPlMappingEntries(id: string, entries: Parameters<typeof window.electronAPI.setPlMappingEntries>[1]) { return window.electronAPI.setPlMappingEntries(id, entries) }
   importPlMappingEntriesFromFile(id: string, filePath: string, sourceKeyCol: string, targetKeyCol: string) { return window.electronAPI.importPlMappingEntriesFromFile(id, filePath, sourceKeyCol, targetKeyCol) }
   bulkImportPlMappingsFromFile(filePath: string) { return window.electronAPI.bulkImportPlMappingsFromFile(filePath) }
+  exportPlMappingsToFile(destPath: string) { return window.electronAPI.exportPlMappingsToFile(destPath) }
 
   // ── Transformations ──────────────────────────────────────────────────────
   createTransformation(name: string, description?: string) { return window.electronAPI.createTransformation(name, description) }

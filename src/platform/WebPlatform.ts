@@ -151,6 +151,12 @@ export class WebPlatform implements IPlatform {
   setPicklistValues(id: string, values: unknown[]):Promise<PicklistValue[]> { return api('/picklists/setValues', { id, values }) }
   importPicklistFromFile(id: string, filePath: string, keyCol: string, labelCol?: string):Promise<{ valueCount: number }> { return api('/picklists/importFromFile', { id, filePath, keyCol, labelCol }) }
   bulkImportPicklistsFromFile(filePath: string, side: string):Promise<{ results: Array<{ name: string; created: boolean; valueCount: number }>;errors: Array<{ name: string; error: string }>}> { return api('/picklists/bulkImportFromFile', { filePath, side }) }
+  async exportPicklistsToFile(_destPath: string, side?: 'source' | 'target'): Promise<void> {
+    const a = document.createElement('a')
+    a.href = `${BASE}/picklists/export${side ? `?side=${side}` : ''}`
+    a.download = side ? `${side}-picklists.xlsx` : 'picklists.xlsx'
+    a.click()
+  }
 
   createPlMapping(name: string, sourcePicklistId?: string, targetPicklistId?: string):Promise<PicklistMapping> { return api('/plmappings/create', { name, sourcePicklistId, targetPicklistId }) }
   listPlMappings():Promise<PicklistMapping[]> { return api('/plmappings/list') }
@@ -160,6 +166,12 @@ export class WebPlatform implements IPlatform {
   setPlMappingEntries(id: string, entries: unknown[]):Promise<PicklistMappingEntry[]> { return api('/plmappings/setEntries', { id, entries }) }
   importPlMappingEntriesFromFile(id: string, filePath: string, sourceKeyCol: string, targetKeyCol: string):Promise<{ entryCount: number }> { return api('/plmappings/importEntriesFromFile', { id, filePath, sourceKeyCol, targetKeyCol }) }
   bulkImportPlMappingsFromFile(filePath: string):Promise<{ results: Array<{ name: string; created: boolean; entryCount: number }>; errors: Array<{ name: string; error: string }>}> { return api('/plmappings/bulkImportFromFile', { filePath }) }
+  async exportPlMappingsToFile(_destPath: string): Promise<void> {
+    const a = document.createElement('a')
+    a.href = `${BASE}/plmappings/export`
+    a.download = 'picklist-mappings.xlsx'
+    a.click()
+  }
 
   createTransformation(name: string, description?: string):Promise<Transformation> { return api('/transformations/create', { name, description }) }
   listTransformations():Promise<Transformation[]> { return api('/transformations/list') }

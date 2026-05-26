@@ -39,18 +39,66 @@ function DirectEditor({
   const val = config.sourceObjectId
     ? encodeField(config.sourceObjectId as string, (config.sourceFieldName as string) ?? '')
     : ''
+
+  // Detect whether the currently selected source field is a picklist
+  const sourceField = (config.sourceObjectId && config.sourceFieldName)
+    ? fieldsMap[config.sourceObjectId as string]?.find(f => f.name === (config.sourceFieldName as string))
+    : undefined
+  const isPicklistField = sourceField?.dataType === 'picklist' && !!sourceField.picklistId
+  const extractMode = (config.extractMode as 'key' | 'label') ?? 'key'
+
+  const handleFieldChange = (v: string | undefined) => {
+    if (!v) { onChange({}); return }
+    const decoded = decodeField(v)
+    const newField = fieldsMap[decoded.sourceObjectId]?.find(f => f.name === decoded.sourceFieldName)
+    const newIsPicklist = newField?.dataType === 'picklist' && !!newField.picklistId
+    onChange({
+      ...decoded,
+      ...(newIsPicklist
+        ? { extractMode: 'key', sourcePicklistId: newField!.picklistId }
+        : { extractMode: undefined, sourcePicklistId: undefined }
+      ),
+    })
+  }
+
+  const handleExtractMode = (mode: 'key' | 'label') => {
+    onChange({ ...config, extractMode: mode, sourcePicklistId: sourceField!.picklistId })
+  }
+
   return (
-    <SourceFieldPicker
-      value={val}
-      sourceObjects={sourceObjects}
-      fieldsMap={fieldsMap}
-      upstreamSourceIds={upstreamSourceIds}
-      sourceGroupLabels={sourceGroupLabels}
-      onChange={v => {
-        if (!v) { onChange({}); return }
-        onChange(decodeField(v))
-      }}
-    />
+    <div className="space-y-2">
+      <SourceFieldPicker
+        value={val}
+        sourceObjects={sourceObjects}
+        fieldsMap={fieldsMap}
+        upstreamSourceIds={upstreamSourceIds}
+        sourceGroupLabels={sourceGroupLabels}
+        onChange={handleFieldChange}
+      />
+      {isPicklistField && (
+        <div className="flex items-center gap-4 text-xs text-gray-600 pl-0.5">
+          <span className="text-gray-400">Extract:</span>
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input
+              type="radio"
+              checked={extractMode === 'key'}
+              onChange={() => handleExtractMode('key')}
+              className="accent-violet-600"
+            />
+            Key (ID)
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input
+              type="radio"
+              checked={extractMode === 'label'}
+              onChange={() => handleExtractMode('label')}
+              className="accent-violet-600"
+            />
+            Label (display value)
+          </label>
+        </div>
+      )}
+    </div>
   )
 }
 
