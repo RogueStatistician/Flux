@@ -13,6 +13,7 @@ import { PicklistsView } from '../workspace/PicklistsView/index.js'
 import { PLMappingsView } from '../workspace/PLMappingsView/index.js'
 import { TransformationsView } from '../workspace/TransformationsView/index.js'
 import { RunsView } from '../workspace/RunsView/index.js'
+import { DevToolsView } from '../workspace/DevToolsView/index.js'
 
 // ── Sidebar nav ───────────────────────────────────────────────────────────────
 
@@ -23,6 +24,7 @@ const NAV_ITEMS: { id: WorkspaceSection; label: string; icon: string }[] = [
   { id: 'plmappings',      label: 'PL Mappings',     icon: '⇌' },
   { id: 'transformations', label: 'Transformations', icon: '⚡' },
   { id: 'runs',            label: 'Runs',            icon: '▶' },
+  { id: 'devtools',        label: 'Dev Tools',       icon: '⚙' },
 ]
 
 // ── Section placeholders ──────────────────────────────────────────────────────
@@ -588,6 +590,7 @@ export function ProjectWorkspace() {
           : section === 'plmappings'       ? <PLMappingsView />
           : section === 'transformations'  ? <TransformationsView />
           : section === 'runs'             ? <RunsView />
+          : section === 'devtools'         ? <DevToolsView />
           : <EmptySection label={activeLabel} />
         }
       </main>

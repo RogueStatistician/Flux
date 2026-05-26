@@ -127,4 +127,46 @@ export interface IPlatform {
   openFile(options: OpenFileOptions): Promise<{ canceled: boolean; filePaths: string[] }>
   saveFile(options: SaveFileOptions): Promise<{ canceled: boolean; filePath?: string }>
   openPath(path: string): Promise<void>
+
+  // ── Dev tools ──────────────────────────────────────────────────────────────
+  dbListTables(): Promise<TableInfo[]>
+  dbQueryTable(tableName: string, page: number, pageSize: number): Promise<TableQueryResult>
+  dbRawQuery(sql: string): Promise<TableQueryResult>
+  renderTransformationQuery(transformationId: string): Promise<TransformationQuery[]>
+}
+
+// ── Dev tools types ───────────────────────────────────────────────────────────
+
+export interface TableInfo {
+  name: string
+  rowCount: number
+}
+
+export interface TableQueryResult {
+  columns: string[]
+  rows: Record<string, unknown>[]
+  total: number
+}
+
+export interface MappingLine {
+  targetField: string
+  ruleType: string
+  description: string
+  notes?: string
+}
+
+export interface QueryPath {
+  mapNodeId: string | null
+  sourceObject: string | null
+  sourceRowCount: number | null
+  filters: string[]
+  mappings: MappingLine[]
+}
+
+export interface TransformationQuery {
+  transformationId: string
+  transformationName: string
+  targetObject: string
+  targetObjectId: string
+  paths: QueryPath[]
 }

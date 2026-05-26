@@ -200,6 +200,19 @@ const electronAPI = {
 
   openPath: (folderPath: string) =>
     ipcRenderer.invoke('shell:openPath', folderPath),
+
+  // ── Dev tools ──────────────────────────────────────────────────────────────
+  dbListTables: () =>
+    ipcRenderer.invoke('devtools:listTables'),
+
+  dbQueryTable: (tableName: string, page: number, pageSize: number) =>
+    ipcRenderer.invoke('devtools:queryTable', tableName, page, pageSize),
+
+  dbRawQuery: (sql: string) =>
+    ipcRenderer.invoke('devtools:rawQuery', sql),
+
+  renderTransformationQuery: (transformationId: string) =>
+    ipcRenderer.invoke('devtools:renderQuery', transformationId),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

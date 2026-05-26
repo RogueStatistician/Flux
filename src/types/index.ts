@@ -28,6 +28,7 @@ export type WorkspaceSection =
   | 'plmappings'
   | 'transformations'
   | 'runs'
+  | 'devtools'
 
 // ── Schema inference ──────────────────────────────────────────────────────────
 

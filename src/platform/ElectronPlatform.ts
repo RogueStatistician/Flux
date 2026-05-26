@@ -77,4 +77,10 @@ export class ElectronPlatform implements IPlatform {
   openFile(options: OpenFileOptions) { return window.electronAPI.openFile(options) }
   saveFile(options: SaveFileOptions) { return window.electronAPI.saveFile(options) }
   openPath(path: string) { return window.electronAPI.openPath(path) }
+
+  // ── Dev tools ────────────────────────────────────────────────────────────
+  dbListTables() { return window.electronAPI.dbListTables() }
+  dbQueryTable(tableName: string, page: number, pageSize: number) { return window.electronAPI.dbQueryTable(tableName, page, pageSize) }
+  dbRawQuery(sql: string) { return window.electronAPI.dbRawQuery(sql) }
+  renderTransformationQuery(transformationId: string) { return window.electronAPI.renderTransformationQuery(transformationId) }
 }

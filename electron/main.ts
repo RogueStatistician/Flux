@@ -8,6 +8,7 @@ import { registerPicklistHandlers } from './ipc/picklists.js'
 import { registerPlMappingHandlers } from './ipc/plmappings.js'
 import { registerTransformationHandlers } from './ipc/transformations.js'
 import { registerRunHandlers } from './ipc/runs.js'
+import { registerDevtoolsHandlers } from './ipc/devtools.js'
 
 // ESM does not provide __dirname — reconstruct it from import.meta.url
 const __filename = fileURLToPath(import.meta.url)
@@ -47,6 +48,7 @@ app.whenReady().then(() => {
   registerPlMappingHandlers()
   registerTransformationHandlers()
   registerRunHandlers()
+  registerDevtoolsHandlers()
 
   createWindow()
 

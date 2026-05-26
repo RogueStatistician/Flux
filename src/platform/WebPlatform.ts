@@ -214,4 +214,16 @@ export class WebPlatform implements IPlatform {
   async openPath(_path: string): Promise<void> {
     // No-op in web mode — can't open file explorer from the browser
   }
+
+  // ── Dev tools ────────────────────────────────────────────────────────────
+  dbListTables() { return api<import('./IPlatform.js').TableInfo[]>('/devtools/tables') }
+  dbQueryTable(tableName: string, page: number, pageSize: number) {
+    return api<import('./IPlatform.js').TableQueryResult>('/devtools/query-table', { tableName, page, pageSize })
+  }
+  dbRawQuery(sql: string) {
+    return api<import('./IPlatform.js').TableQueryResult>('/devtools/raw-query', { sql })
+  }
+  renderTransformationQuery(transformationId: string) {
+    return api<import('./IPlatform.js').TransformationQuery[]>('/devtools/render-query', { transformationId })
+  }
 }
