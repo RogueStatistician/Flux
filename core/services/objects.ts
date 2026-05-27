@@ -3,7 +3,7 @@
  */
 import fs from 'fs'
 import { getDb } from '../db.js'
-import { parseFile, parseHeaders, inferSchema, type ParseOptions } from '../importer.js'
+import { parseFile, parseHeaders, readRawRows, detectBestHeaderRow, inferSchema, type ParseOptions } from '../importer.js'
 
 /** Maximum number of rows stored in source_rows for preview purposes. */
 export const PREVIEW_ROWS = 500
@@ -108,11 +108,29 @@ export async function inferSchemaFromFile(filePath: string, options?: ParseOptio
   return { headers, fields, rows: rows.slice(0, 8) }
 }
 
-/** Read only the headers from a file (for target template import). */
+/**
+ * Read only the headers from a file (for target template import).
+ * When no `options.skipRows` is specified, auto-detects the best header row
+ * and returns `detectedHeaderRow` (1-indexed) if it differs from row 1.
+ */
 export async function inferSchemaFromHeadersOnly(filePath: string, options?: ParseOptions) {
-  const headers = await parseHeaders(filePath, options)
+  const skipCols = options?.skipColumns ?? 0
+  let effectiveOptions = options
+  let detectedHeaderRow: number | undefined
+
+  // Auto-detect only when the caller hasn't pinned a specific header row
+  if (options?.skipRows === undefined) {
+    const rawRows = await readRawRows(filePath, options?.separator)
+    const bestIdx = detectBestHeaderRow(rawRows, skipCols)
+    if (bestIdx > 0) {
+      detectedHeaderRow = bestIdx + 1  // convert to 1-indexed for UI
+      effectiveOptions = { ...options, skipRows: bestIdx }
+    }
+  }
+
+  const headers = await parseHeaders(filePath, effectiveOptions)
   const fields = inferSchema(headers, [])
-  return { headers, fields }
+  return { headers, fields, detectedHeaderRow }
 }
 
 /** Create a new data object (source or target). */

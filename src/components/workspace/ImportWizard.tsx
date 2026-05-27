@@ -86,6 +86,9 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
     setDataStartRowLinked(false)
   }
 
+  // Auto-detection banner
+  const [autoDetectedRow, setAutoDetectedRow] = useState<number | null>(null)
+
   // Picklists for the matching role side
   const [picklists, setPicklists] = useState<Picklist[]>([])
 
@@ -105,31 +108,64 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
 
   // ── Schema loading ─────────────────────────────────────────────────────────
 
-  const loadSchema = useCallback(async (sep: string, hRow: number, skipCols: number) => {
+  const loadSchema = useCallback(async (
+    sep: string,
+    hRow: number,
+    skipCols: number,
+    /** When true, allow the backend to auto-detect the header row. */
+    allowAutoDetect: boolean = false,
+  ) => {
     if (!filePath) return
     setLoadingSchema(true)
     setSchemaError(null)
     try {
       // Convert 1-indexed headerRow to 0-indexed skipRows for the backend.
       const skipRows = Math.max(0, hRow - 1)
-      const opts = {
+      const baseOpts = {
         ...(isCsv && sep !== ',' ? { separator: sep } : {}),
-        ...(skipRows > 0 ? { skipRows } : {}),
         ...(skipCols > 0 ? { skipColumns: skipCols } : {}),
       }
-      const hasOpts = Object.keys(opts).length > 0
-      const inferFn = role === 'target'
-        ? platform.inferSchemaFromHeaders(filePath, hasOpts ? opts : undefined)
-        : platform.inferSchema(filePath, hasOpts ? opts : undefined)
-      const { fields: inferred } = await inferFn
-      setFields(inferred.map(f => ({
-        _key: makeKey(),
-        name: f.name,
-        dataType: f.dataType,
-        isRequired: f.isRequired,
-        isNullable: f.isNullable,
-        dateFormat: f.dateFormat,
-      })))
+      const optsWithRow = { ...baseOpts, ...(skipRows > 0 ? { skipRows } : {}) }
+
+      if (role === 'target') {
+        // On auto-detect pass, omit skipRows so the backend can scan for the best row.
+        const detectOpts = allowAutoDetect ? baseOpts : optsWithRow
+        const opts = detectOpts
+        const hasOpts = Object.keys(detectOpts).length > 0
+        const { fields: inferred, detectedHeaderRow } = await platform.inferSchemaFromHeaders(filePath, hasOpts ? detectOpts : undefined)
+
+        if (allowAutoDetect && detectedHeaderRow !== undefined && detectedHeaderRow !== hRow) {
+          setAutoDetectedRow(detectedHeaderRow)
+          setHeaderRow(detectedHeaderRow)
+          setDataStartRow(detectedHeaderRow + 1)
+          // Now re-infer with the detected row applied so fields are correct
+          const correctedSkipRows = detectedHeaderRow - 1
+          const correctedOpts = {
+            ...(isCsv && sep !== ',' ? { separator: sep } : {}),
+            ...(correctedSkipRows > 0 ? { skipRows: correctedSkipRows } : {}),
+            ...(skipCols > 0 ? { skipColumns: skipCols } : {}),
+          }
+          const hasCorrected = Object.keys(correctedOpts).length > 0
+          const { fields: correctedFields } = await platform.inferSchemaFromHeaders(filePath, hasCorrected ? correctedOpts : undefined)
+          setFields(correctedFields.map(f => ({
+            _key: makeKey(), name: f.name, dataType: f.dataType,
+            isRequired: f.isRequired, isNullable: f.isNullable, dateFormat: f.dateFormat,
+          })))
+        } else {
+          setFields(inferred.map(f => ({
+            _key: makeKey(), name: f.name, dataType: f.dataType,
+            isRequired: f.isRequired, isNullable: f.isNullable, dateFormat: f.dateFormat,
+          })))
+        }
+      } else {
+        const hasOpts = Object.keys(optsWithRow).length > 0
+        const { fields: inferred } = await platform.inferSchema(filePath, hasOpts ? optsWithRow : undefined)
+        setFields(inferred.map(f => ({
+          _key: makeKey(), name: f.name, dataType: f.dataType,
+          isRequired: f.isRequired, isNullable: f.isNullable, dateFormat: f.dateFormat,
+        })))
+      }
+
       setName(prev => prev || (filePath.split(/[\\/]/).pop() ?? '').replace(/\.[^.]+$/, ''))
     } catch (e) {
       setSchemaError(e instanceof Error ? e.message : 'Failed to read file.')
@@ -140,7 +176,7 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
 
   // Auto-load on mount — only schema/header-row options affect field inference
   useEffect(() => {
-    loadSchema(separator, headerRow, skipColumns)
+    loadSchema(separator, headerRow, skipColumns, true /* allowAutoDetect */)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // User re-triggers via button after changing layout options
 
@@ -266,9 +302,10 @@ export function ImportWizard({ role, filePath, onDone, onCancel }: Props) {
               dataStartRowLinked={dataStartRowLinked}
               skipColumns={skipColumns}
               onSkipColumns={setSkipColumns}
-              onReInfer={() => loadSchema(separator, headerRow, skipColumns)}
+              onReInfer={() => { setAutoDetectedRow(null); loadSchema(separator, headerRow, skipColumns) }}
               loading={loadingSchema}
               error={schemaError}
+              autoDetectedRow={autoDetectedRow}
               fields={fields}
               picklists={picklists}
               onUpdateField={updateField}
@@ -328,7 +365,7 @@ function SchemaStep({
   dataStartRow, onDataStartRow, dataStartRowLinked,
   skipColumns, onSkipColumns,
   onReInfer,
-  loading, error, fields, picklists, onUpdateField, onAddField, onRemoveField,
+  loading, error, autoDetectedRow, fields, picklists, onUpdateField, onAddField, onRemoveField,
 }: {
   hasFile: boolean
   isCsv: boolean
@@ -340,6 +377,7 @@ function SchemaStep({
   onReInfer: () => void
   loading: boolean
   error: string | null
+  autoDetectedRow: number | null
   fields: EditableField[]
   picklists: Picklist[]
   onUpdateField: (key: string, patch: Partial<EditableField>) => void
@@ -431,6 +469,15 @@ function SchemaStep({
               {' '}before column {skipColumns + 1} will be preserved unchanged in the output file.
             </p>
           )}
+        </div>
+      )}
+
+      {autoDetectedRow !== null && (
+        <div className="mb-4 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700 flex items-center gap-2">
+          <span>⚡</span>
+          <span>
+            Header row auto-detected as <strong>row {autoDetectedRow}</strong> — adjust above if needed and click ↺ Refresh columns.
+          </span>
         </div>
       )}
 

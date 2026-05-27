@@ -245,7 +245,9 @@ export async function bulkImportPlMappingsFromFile(filePath: string) {
 
 /**
  * Export all picklist mappings to an Excel buffer.
- * One sheet per mapping, columns: source_key, target_key — matches bulk-import format.
+ * One sheet per mapping.
+ * Columns: source_key, target_key, source_picklist_name, target_picklist_name.
+ * The first two columns match the bulk-import format; the last two are informational.
  */
 export async function exportPlMappingsToBuffer(): Promise<Buffer> {
   const db = getDb()
@@ -255,6 +257,12 @@ export async function exportPlMappingsToBuffer(): Promise<Buffer> {
     'SELECT * FROM picklist_mappings WHERE project_id = ? ORDER BY name ASC'
   ).all(projectId) as MappingRow[]
 
+  // Build a quick id→name lookup for all picklists in this project
+  const picklistRows = db.prepare(
+    "SELECT id, name FROM picklists WHERE project_id = ?"
+  ).all(projectId) as { id: string; name: string }[]
+  const picklistName = new Map(picklistRows.map(p => [p.id, p.name]))
+
   const wb = new ExcelJS.Workbook()
 
   for (const m of mappings) {
@@ -262,12 +270,22 @@ export async function exportPlMappingsToBuffer(): Promise<Buffer> {
       'SELECT * FROM picklist_mapping_entries WHERE mapping_id = ?'
     ).all(m.id) as EntryRow[]
 
+    const sourceName = m.source_picklist_id ? (picklistName.get(m.source_picklist_id) ?? '') : ''
+    const targetName = m.target_picklist_id ? (picklistName.get(m.target_picklist_id) ?? '') : ''
+
     const sheetName = m.name.slice(0, 31)
     const ws = wb.addWorksheet(sheetName)
-    ws.addRow(['source_key', 'target_key'])
+
+    // Header row
+    const headerRow = ws.addRow(['source_key', 'target_key', 'source_picklist_name', 'target_picklist_name'])
+    headerRow.font = { bold: true }
+
     for (const e of entries) {
-      ws.addRow([e.source_key, e.target_key])
+      ws.addRow([e.source_key, e.target_key, sourceName, targetName])
     }
+
+    // Auto-fit columns
+    ws.columns.forEach(col => { col.width = 28 })
   }
 
   if (mappings.length === 0) wb.addWorksheet('Sheet1')

@@ -78,7 +78,7 @@ function cellToString(v: ExcelJS.CellValue): string {
 // ── Core parsing ──────────────────────────────────────────────────────────────
 
 /** Read all rows from the first sheet of a file as a 2-D string array. */
-async function readRawRows(filePath: string, separator?: string): Promise<string[][]> {
+export async function readRawRows(filePath: string, separator?: string): Promise<string[][]> {
   const isCsv = /\.(csv|tsv|txt)$/i.test(filePath)
   const isLegacyXls = /\.xls$/i.test(filePath)  // .xls (not .xlsx)
 
@@ -111,7 +111,9 @@ async function readRawRows(filePath: string, separator?: string): Promise<string
   const wb = new ExcelJS.Workbook()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await wb.xlsx.load(buf as any)
-  const ws = wb.getWorksheet(1)
+  // Use wb.worksheets[0] rather than getWorksheet(1) — the latter looks up by
+  // internal worksheet ID which may not be 1 in all Excel files.
+  const ws = wb.worksheets[0]
   if (!ws) return []
 
   const rows: string[][] = []
@@ -120,6 +122,18 @@ async function readRawRows(filePath: string, separator?: string): Promise<string
     const vals = (row.values as (ExcelJS.CellValue | undefined)[]).slice(1)
     rows.push(vals.map(v => cellToString(v ?? null)))
   })
+
+  // Some .xlsx files (e.g. Workday templates with frozen panes / special formatting)
+  // are not iterable by ExcelJS. Fall back to SheetJS which handles a wider range.
+  if (rows.length === 0) {
+    const sheetJsWb = XLSX.read(buf, { type: 'buffer', cellText: true, cellDates: false })
+    const sheetName = sheetJsWb.SheetNames[0]
+    if (!sheetName) return []
+    const sheetJsWs = sheetJsWb.Sheets[sheetName]
+    const raw = XLSX.utils.sheet_to_json<string[]>(sheetJsWs, { header: 1, defval: '', raw: false }) as string[][]
+    return raw
+  }
+
   return rows
 }
 
@@ -204,6 +218,45 @@ export async function parseAllSheets(filePath: string): Promise<Array<{
     results.push({ sheetName: ws.name, headers, rows })
   })
   return results
+}
+
+// ── Header row auto-detection ─────────────────────────────────────────────────
+
+/**
+ * Scan the first `maxScanRows` rows (default 10) of a raw row matrix and
+ * return the 0-based index of the row most likely to contain column headers.
+ *
+ * Heuristic: the header row is the one with the most *distinct* non-empty
+ * values. Merged-cell title rows (same value repeated across all columns)
+ * score 1; data rows (numeric or repeated picklist values) score low;
+ * a real header row with unique text labels scores highest.
+ *
+ * @param startCol  Number of leading columns to skip (default 0).
+ */
+export function detectBestHeaderRow(
+  rawRows: string[][],
+  startCol: number = 0,
+  maxScanRows: number = 10,
+): number {
+  const limit = Math.min(rawRows.length, maxScanRows)
+  if (limit === 0) return 0
+
+  let bestIdx = 0
+  let bestScore = -1
+
+  for (let i = 0; i < limit; i++) {
+    const row = rawRows[i].slice(startCol)
+    const nonEmpty = row.filter(v => v.trim() !== '')
+    const distinct = new Set(nonEmpty.map(v => v.trim())).size
+    // Prefer rows where most values are non-empty and distinct
+    const score = distinct
+    if (score > bestScore) {
+      bestScore = score
+      bestIdx = i
+    }
+  }
+
+  return bestIdx
 }
 
 // ── Schema inference ──────────────────────────────────────────────────────────

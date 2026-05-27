@@ -49,7 +49,7 @@ export interface IPlatform {
 
   // ── Objects & Fields ───────────────────────────────────────────────────────
   inferSchema(filePath: string, options?: { separator?: string; skipRows?: number; skipColumns?: number }): Promise<{ headers: string[]; fields: InferredField[]; rows: Record<string, string>[] }>
-  inferSchemaFromHeaders(filePath: string, options?: { separator?: string; skipRows?: number; skipColumns?: number }): Promise<{ headers: string[]; fields: InferredField[] }>
+  inferSchemaFromHeaders(filePath: string, options?: { separator?: string; skipRows?: number; skipColumns?: number }): Promise<{ headers: string[]; fields: InferredField[]; detectedHeaderRow?: number }>
   createObject(
     role: ObjectRole,
     name: string,
