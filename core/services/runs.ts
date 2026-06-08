@@ -122,10 +122,8 @@ export async function previewOutput(runId: string, targetObjectId: string, limit
     headers  = (parsed[0] ?? []).map(h => String(h ?? '').trim())
     dataRows = parsed.slice(1)
   } else {
-    const buf = fs.readFileSync(target.filePath)
     const wb = new ExcelJS.Workbook()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await wb.xlsx.load(buf as any)
+    await wb.xlsx.readFile(target.filePath)
     const ws = wb.getWorksheet(1)
     if (!ws) return { headers: [], rows: [], totalRows: 0 }
 

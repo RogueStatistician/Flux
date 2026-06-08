@@ -896,10 +896,16 @@ export async function executeTransformation(transformationId: string): Promise<s
   return runId
 }
 
+function _memMB() {
+  const m = process.memoryUsage()
+  return `rss=${Math.round(m.rss/1024/1024)}MB heap=${Math.round(m.heapUsed/1024/1024)}/${Math.round(m.heapTotal/1024/1024)}MB`
+}
+
 async function _runEngine(runId: string, transformationId: string): Promise<void> {
   const db = getDb()
   const runState = activeRuns.get(runId)!
 
+  console.log(`[MEM] run start: ${_memMB()}`)
   sendProgress(runId, { status: 'running', phase: 'loading' })
 
   // ── Load canvas state (for filter node evaluation) ───────────────────────────
@@ -984,6 +990,7 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
   // access is synchronous throughout.
 
   const sourceCache = await buildSourceCache(canvas, mappingRows, db)
+  console.log(`[MEM] after source cache (${sourceCache.size} objects): ${_memMB()}`)
 
   // ── Temp output directory ────────────────────────────────────────────────────
 
@@ -1041,36 +1048,60 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       paths.push({ mapNodeId: null, mappings: [...byNode.values()].flat() })
     }
 
-    // ── DIAGNOSTIC: show all DB keys for this target ─────────────────────────
-    {
-      const diagLines: string[] = []
-      diagLines.push(`[FLUX-DIAG2] target="${targetObj.name}" (${targetObjectId})`)
-      diagLines.push(`  total mappingRows in DB for transformation: ${mappingRows.length}`)
-      diagLines.push(`  all mappingRows for THIS target:`)
-      for (const m of mappingRows.filter(m => m.target_object_id === targetObjectId)) {
-        diagLines.push(`    field_id=${m.target_field_id} rule=${m.rule_type} map_node_id=${m.map_node_id ?? 'null'} config=${m.rule_config}`)
-      }
-      diagLines.push(`  canvasMapNodeIds: ${JSON.stringify(canvasMapNodeIds)}`)
-      diagLines.push(`  byNode keys for this target:`)
-      for (const [k, v] of byNode) {
-        diagLines.push(`    key=${k ?? 'null'} → ${v.length} mappings`)
-      }
-      diagLines.push(`  paths resolved:`)
-      for (const p of paths) {
-        diagLines.push(`    mapNodeId=${p.mapNodeId ?? 'null'} → ${p.mappings.length} mappings`)
-      }
-      const diagPath = path.join(getEngineConfig().tempDir, `flux-diag2-${runId}.txt`)
-      fs.mkdirSync(getEngineConfig().tempDir, { recursive: true })
-      fs.appendFileSync(diagPath, diagLines.join('\n') + '\n')
-      console.log(`[FLUX-DIAG2] wrote to ${diagPath}`)
-    }
-    // ── END DIAGNOSTIC ───────────────────────────────────────────────────────
-
     sendProgress(runId, { status: 'running', phase: 'processing', currentTarget: targetObj.name, rowsDone: 0, rowsTotal: 0 })
 
-    // ── Multi-path row processing: one pass per MapNode, results concatenated ──
+    // ── Set up output writer before the processing loop ───────────────────────
+    // Rows are written directly as they are produced — no outputRows accumulation.
 
-    const outputRows: Record<string, string>[] = []
+    const format = targetObj.output_format as 'xlsx' | 'csv'
+    const ext = format === 'xlsx' ? '.xlsx' : '.csv'
+    const outFilePath = path.join(tempDir, `${targetObjectId}${ext}`)
+
+    const templateFilePath = targetObj.template_file_path
+    const headerRow = targetObj.template_header_row ?? 0
+    const skipColumns = targetObj.template_skip_columns ?? 0
+    // firstDataRow defaults to headerRow + 1 when template_data_start_row is not set,
+    // preserving backward-compatible behaviour for Case A (header row = last preamble row).
+    // When set explicitly it can differ from headerRow (Case B: header row for field-name
+    // inference is earlier than the last preserved preamble row).
+    const firstDataRow = targetObj.template_data_start_row ?? (headerRow + 1)
+    const useTemplate = format === 'xlsx' && !!templateFilePath && fs.existsSync(templateFilePath)
+
+    let outputRowCount = 0
+
+    let templateWb: ExcelJS.Workbook | null = null
+    let templateWs: ExcelJS.Worksheet | null = null
+    let xlsxWriter: ExcelJS.stream.xlsx.WorkbookWriter | null = null
+    let xlsxWs: ReturnType<ExcelJS.stream.xlsx.WorkbookWriter['addWorksheet']> | null = null
+    let csvFd = -1
+    const csvEscape = (v: string) =>
+      (v.includes(',') || v.includes('"') || v.includes('\n'))
+        ? `"${v.replace(/"/g, '""')}"` : v
+
+    if (useTemplate) {
+      templateWb = new ExcelJS.Workbook()
+      await templateWb.xlsx.readFile(templateFilePath!)
+      templateWs = templateWb.getWorksheet(1)!
+      const lastRow = templateWs.rowCount
+      const lastCol = templateWs.columnCount
+      for (let r = firstDataRow + 1; r <= lastRow; r++) {
+        for (let c = skipColumns + 1; c <= lastCol; c++) {
+          templateWs.getCell(r, c).value = null
+        }
+      }
+    } else if (format === 'xlsx') {
+      // Streaming writer — rows are flushed to disk as committed, full workbook never in memory.
+      xlsxWriter = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: outFilePath })
+      xlsxWs = xlsxWriter.addWorksheet(targetObj.name.slice(0, 31))
+      xlsxWs.addRow(targetFields.map(tf => tf.name)).commit()
+    } else {
+      csvFd = fs.openSync(outFilePath, 'w')
+      fs.writeSync(csvFd, targetFields.map(f => csvEscape(f.name)).join(',') + '\n', null, 'utf-8')
+    }
+
+    console.log(`[MEM] ${targetObj.name}: output writer ready: ${_memMB()}`)
+
+    // ── Multi-path row processing: one pass per MapNode, results streamed to output ──
 
     for (const { mapNodeId, mappings } of paths) {
       if (mappings.length === 0) continue
@@ -1149,17 +1180,6 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
         const srcRow = sourceRows[i]
         if (filterConditions.length > 0 && !filterConditions.every(c => evaluateFilterCondition(c, srcRow))) continue
 
-        // ── DIAG: log field lookups on row 0 ──────────────────────────────────
-        if (i === 0 && outputRows.length === 0) {
-          const diagPath = path.join(getEngineConfig().tempDir, `flux-diag2-${runId}.txt`)
-          const lines: string[] = [`[FLUX-DIAG2] processing row 0: fmByFieldId.size=${fmByFieldId.size} targetFields.count=${targetFields.length}`]
-          for (const tf of targetFields) {
-            const fm = fmByFieldId.get(tf.id)
-            lines.push(`  field=${tf.name} id=${tf.id} → ${fm ? `rule=${fm.rule_type} config=${fm.rule_config}` : 'MISS'}`)
-          }
-          fs.appendFileSync(diagPath, lines.join('\n') + '\n')
-        }
-        // ── END DIAG ──────────────────────────────────────────────────────────
         // outRow is keyed by field ID (not name) to handle Workday templates where the
         // same column name (e.g. "Delete", "Row ID*") appears in multiple sections.
         // Keying by name would cause later sections to silently overwrite earlier values.
@@ -1199,8 +1219,8 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
               case 'substring':          value = applySubstring(cfg as Parameters<typeof applySubstring>[0], srcRow); break
               case 'dateformat':         value = applyDateFormat(cfg as Parameters<typeof applyDateFormat>[0], srcRow); break
               case 'picklisttranslate':  value = applyPicklistTranslate(cfg as Parameters<typeof applyPicklistTranslate>[0], srcRow, picklistMaps); break
-              case 'expression':         value = applyExpression(cfg as { expression: string }, srcRow, outputRows.length, compiledFn); break
-              case 'incremental':        value = applyIncremental(cfg as Parameters<typeof applyIncremental>[0], outputRows.length); break
+              case 'expression':         value = applyExpression(cfg as { expression: string }, srcRow, outputRowCount, compiledFn); break
+              case 'incremental':        value = applyIncremental(cfg as Parameters<typeof applyIncremental>[0], outputRowCount); break
               case 'conditional':        value = applyConditional(cfg as Parameters<typeof applyConditional>[0], srcRow); break
               default:                   value = ''
             }
@@ -1214,103 +1234,57 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
           }
           outRow[tf.id] = value
         }
-        outputRows.push(outRow)
+
+        // Write the row directly to output — no in-memory accumulation.
+        if (templateWs) {
+          const r = firstDataRow + 1 + outputRowCount
+          targetFields.forEach((tf, colIdx) => {
+            templateWs!.getCell(r, skipColumns + 1 + colIdx).value = outRow[tf.id] ?? ''
+          })
+        } else if (xlsxWs) {
+          xlsxWs.addRow(targetFields.map(tf => outRow[tf.id] ?? '')).commit()
+        } else if (csvFd >= 0) {
+          fs.writeSync(csvFd, targetFields.map(tf => csvEscape(outRow[tf.id] ?? '')).join(',') + '\n', null, 'utf-8')
+        }
+        outputRowCount++
 
         if ((i + 1) % 250 === 0) {
-          sendProgress(runId, { status: 'running', phase: 'processing', currentTarget: targetObj.name, rowsDone: outputRows.length, rowsTotal: outputRows.length })
+          sendProgress(runId, { status: 'running', phase: 'processing', currentTarget: targetObj.name, rowsDone: outputRowCount, rowsTotal: outputRowCount })
           await new Promise<void>(resolve => setImmediate(resolve))
         }
       }
 
-      // Allow GC to collect the (potentially large) joined row set before writing output
+      // Allow GC to collect the (potentially large) joined row set before the next path.
       sourceRows = []
     }
 
-    totalRowsProcessed += outputRows.length
+    // ── Finalise output file ──────────────────────────────────────────────────
 
-    // ── DIAGNOSTIC: show first output row content ──────────────────────────────
-    {
-      const diagPath = path.join(getEngineConfig().tempDir, `flux-diag2-${runId}.txt`)
-      const diagLine = `[FLUX-DIAG2] outputRows.length=${outputRows.length} first=${JSON.stringify(outputRows[0] ?? null)}\n`
-      fs.appendFileSync(diagPath, diagLine)
-    }
-    // ── END DIAGNOSTIC ────────────────────────────────────────────────────────
+    console.log(`[MEM] ${targetObj.name}: ${outputRowCount} rows written, before finalise: ${_memMB()}`)
 
-    // ── Write output file ─────────────────────────────────────────────────────
-
-    const format = targetObj.output_format as 'xlsx' | 'csv'
-    const ext = format === 'xlsx' ? '.xlsx' : '.csv'
-    const outFilePath = path.join(tempDir, `${targetObjectId}${ext}`)
-
-    const templateFilePath = targetObj.template_file_path
-    const headerRow = targetObj.template_header_row ?? 0
-    const skipColumns = targetObj.template_skip_columns ?? 0
-    // firstDataRow defaults to headerRow + 1 when template_data_start_row is not set,
-    // preserving backward-compatible behaviour for Case A (header row = last preamble row).
-    // When set explicitly it can differ from headerRow (Case B: header row for field-name
-    // inference is earlier than the last preserved preamble row).
-    const firstDataRow = targetObj.template_data_start_row ?? (headerRow + 1)
-    const useTemplate = format === 'xlsx' && !!templateFilePath && fs.existsSync(templateFilePath)
-
-    if (format === 'xlsx' && useTemplate) {
-      // ── Template-based output: preserve the original workbook structure ──────
-      // Load the original template, clear the data area, then write transformed
-      // rows so preamble rows and column offsets are retained exactly.
-      // ExcelJS uses 1-based row/column indices throughout.
-      // readFile + writeFile avoid holding the raw bytes + workbook + output buffer
-      // all in memory simultaneously (the main cause of 2-4GB spikes on large templates).
-      const wb = new ExcelJS.Workbook()
-      await wb.xlsx.readFile(templateFilePath!)
-      const ws = wb.getWorksheet(1)!
-
-      // Clear the data area (firstDataRow onwards, skipColumns onwards).
-      const lastRow = ws.rowCount
-      const lastCol = ws.columnCount
-      for (let r = firstDataRow + 1; r <= lastRow; r++) {
-        for (let c = skipColumns + 1; c <= lastCol; c++) {
-          ws.getCell(r, c).value = null
-        }
-      }
-
-      // Write transformed rows starting at firstDataRow (1-based: firstDataRow + 1).
-      // outRow is keyed by field ID (not name) — handles duplicate column names safely.
-      outputRows.forEach((outRow, rowIdx) => {
-        const r = firstDataRow + 1 + rowIdx
-        targetFields.forEach((tf, colIdx) => {
-          const c = skipColumns + 1 + colIdx
-          ws.getCell(r, c).value = outRow[tf.id] ?? ''
-        })
-      })
-
-      await wb.xlsx.writeFile(outFilePath)
-    } else if (format === 'xlsx') {
-      // ── Standard from-scratch XLSX output ────────────────────────────────────
-      const wb = new ExcelJS.Workbook()
-      const ws = wb.addWorksheet(targetObj.name.slice(0, 31))
-      const headers = targetFields.map(tf => tf.name)
-      ws.addRow(headers)
-      for (const row of outputRows) {
-        ws.addRow(targetFields.map(tf => row[tf.id] ?? ''))
-      }
-      await wb.xlsx.writeFile(outFilePath)
-    } else {
-      const csvEscape = (v: string) =>
-        (v.includes(',') || v.includes('"') || v.includes('\n'))
-          ? `"${v.replace(/"/g, '""')}"` : v
-      const fd = fs.openSync(outFilePath, 'w')
-      fs.writeSync(fd, targetFields.map(f => csvEscape(f.name)).join(',') + '\n', null, 'utf-8')
-      for (const row of outputRows) {
-        fs.writeSync(fd, targetFields.map(tf => csvEscape(row[tf.id] ?? '')).join(',') + '\n', null, 'utf-8')
-      }
-      fs.closeSync(fd)
+    if (useTemplate && templateWb) {
+      await templateWb.xlsx.writeFile(outFilePath)
+      templateWb = null
+      templateWs = null
+    } else if (xlsxWriter && xlsxWs) {
+      await xlsxWs.commit()
+      await xlsxWriter.commit()
+      xlsxWriter = null
+      xlsxWs = null
+    } else if (csvFd >= 0) {
+      fs.closeSync(csvFd)
+      csvFd = -1
     }
 
+    console.log(`[MEM] ${targetObj.name}: after finalise: ${_memMB()}`)
+
+    totalRowsProcessed += outputRowCount
     manifest.targets.push({
       objectId: targetObjectId,
       objectName: targetObj.name,
       format,
       filePath: outFilePath,
-      rowCount: outputRows.length,
+      rowCount: outputRowCount,
     })
   }
 
@@ -1327,6 +1301,7 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
   `).run(finalStatus, completedAt, JSON.stringify(stats), JSON.stringify(manifest), runId)
 
   activeRuns.delete(runId)
+  console.log(`[MEM] run complete (${finalStatus}): ${_memMB()}`)
 
   sendProgress(runId, {
     status: finalStatus,
