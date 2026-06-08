@@ -427,41 +427,6 @@ function findFilterConditions(
  * Find filter conditions on the path from sourceObjectId UP TO (but not through)
  * a joinOperator node — i.e. pre-join filters for one input side.
  */
-function findPreJoinFilters(
-  sourceObjectId: string,
-  toNodeId: string,
-  canvas: CanvasState,
-): FilterCondition[] {
-  const { nodes, edges } = canvas
-  const collected: FilterCondition[] = []
-
-  function walk(nodeId: string): boolean {
-    for (const edge of edges) {
-      if (edge.target !== nodeId) continue
-      const srcNode = nodes.find(n => n.id === edge.source)
-      if (!srcNode) continue
-
-      if (srcNode.type === 'sourceObject') {
-        if ((srcNode.data.objectId as string) === sourceObjectId) return true
-      } else if (srcNode.type === 'joinOperator') {
-        // Do not traverse into other join nodes when collecting pre-join filters
-        return false
-      } else if (srcNode.type === 'filterOperator') {
-        if (walk(srcNode.id)) {
-          const conds = (srcNode.data.conditions ?? []) as FilterCondition[]
-          collected.push(...conds)
-          return true
-        }
-      } else {
-        if (walk(srcNode.id)) return true
-      }
-    }
-    return false
-  }
-
-  walk(toNodeId)
-  return collected
-}
 
 /**
  * Find filter conditions on the path from a joinOperator node to the target —
@@ -771,17 +736,13 @@ function collectSourceRowsForMapNode(
     return { sourceRows: allRows, filterConditions: [], primarySourceObjectId }
   }
 
-  // Join operator: use existing join logic but rooted at mapNode
+  // Join operator: walk the full upstream graph recursively to support cascaded joins
   const joinSpec = findJoinSpecFromNode(mapNodeId, canvas)
   if (joinSpec) {
-    let rowsA = loadRows(joinSpec.sourceAId)
-    const filtersA = findPreJoinFilters(joinSpec.sourceAId, joinSpec.joinNodeId, canvas)
-    if (filtersA.length > 0) rowsA = rowsA.filter(row => filtersA.every(c => evaluateFilterCondition(c, row)))
-
-    let rowsB = loadRows(joinSpec.sourceBId)
-    const filtersB = findPreJoinFilters(joinSpec.sourceBId, joinSpec.joinNodeId, canvas)
-    if (filtersB.length > 0) rowsB = rowsB.filter(row => filtersB.every(c => evaluateFilterCondition(c, row)))
-
+    const edgeA = canvas.edges.find(e => e.target === joinSpec.joinNodeId && e.targetHandle === 'input-a')
+    const edgeB = canvas.edges.find(e => e.target === joinSpec.joinNodeId && e.targetHandle === 'input-b')
+    const rowsA = edgeA ? collectRowsFromNode(edgeA.source, canvas, sourceCache) : []
+    const rowsB = edgeB ? collectRowsFromNode(edgeB.source, canvas, sourceCache) : []
     const joined = executeJoin(rowsA, rowsB, joinSpec)
     const postFilters = findPostJoinFilters(joinSpec.joinNodeId, mapNodeId, canvas)
     return { sourceRows: joined, filterConditions: postFilters, primarySourceObjectId: joinSpec.sourceAId }
@@ -859,6 +820,72 @@ function executeJoin(
   }
 
   return result
+}
+
+/**
+ * Recursively evaluate a canvas node and return the rows it produces.
+ * Handles sourceObject, joinOperator (including cascaded), filterOperator,
+ * dedupOperator, and appendOperator — the full node graph, not just flat lookups.
+ */
+function collectRowsFromNode(
+  nodeId: string,
+  canvas: CanvasState,
+  sourceCache: Map<string, Record<string, string>[]>,
+): Record<string, string>[] {
+  const node = canvas.nodes.find(n => n.id === nodeId)
+  if (!node) return []
+
+  switch (node.type) {
+    case 'sourceObject':
+      return sourceCache.get(node.data.objectId as string) ?? []
+
+    case 'joinOperator': {
+      const edgeA = canvas.edges.find(e => e.target === nodeId && e.targetHandle === 'input-a')
+      const edgeB = canvas.edges.find(e => e.target === nodeId && e.targetHandle === 'input-b')
+      if (!edgeA || !edgeB) return []
+      const rowsA = collectRowsFromNode(edgeA.source, canvas, sourceCache)
+      const rowsB = collectRowsFromNode(edgeB.source, canvas, sourceCache)
+      return executeJoin(rowsA, rowsB, {
+        joinNodeId: nodeId,
+        joinType: (node.data.joinType as 'inner' | 'left' | 'right') ?? 'left',
+        joinKeyA: (node.data.joinKeyA as string) ?? '',
+        joinKeyB: (node.data.joinKeyB as string) ?? '',
+        sourceAId: '',
+        sourceBId: '',
+      })
+    }
+
+    case 'filterOperator': {
+      const inEdge = canvas.edges.find(e => e.target === nodeId)
+      if (!inEdge) return []
+      const rows = collectRowsFromNode(inEdge.source, canvas, sourceCache)
+      const conditions = (node.data.conditions ?? []) as FilterCondition[]
+      return conditions.length > 0
+        ? rows.filter(r => conditions.every(c => evaluateFilterCondition(c, r)))
+        : rows
+    }
+
+    case 'dedupOperator': {
+      const inEdge = canvas.edges.find(e => e.target === nodeId)
+      if (!inEdge) return []
+      const rows = collectRowsFromNode(inEdge.source, canvas, sourceCache)
+      return applyDedupRows(rows, node.data as { keyFields?: string[]; sortField?: string; keepOrder?: 'last' | 'first' })
+    }
+
+    case 'appendOperator': {
+      const allRows: Record<string, string>[] = []
+      for (const edge of canvas.edges.filter(e => e.target === nodeId)) {
+        allRows.push(...collectRowsFromNode(edge.source, canvas, sourceCache))
+      }
+      return allRows
+    }
+
+    default: {
+      const inEdge = canvas.edges.find(e => e.target === nodeId)
+      if (inEdge) return collectRowsFromNode(inEdge.source, canvas, sourceCache)
+      return []
+    }
+  }
 }
 
 // ── Main execute function ──────────────────────────────────────────────────────
@@ -1082,9 +1109,12 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       templateWb = new ExcelJS.Workbook()
       await templateWb.xlsx.readFile(templateFilePath!)
       templateWs = templateWb.getWorksheet(1)!
-      const lastRow = templateWs.rowCount
+      // ws.rowCount uses the sheet's declared dimension extent, which can be
+      // 1,048,576 if column formatting was ever applied. Walk only actual rows.
+      let actualLastDataRow = firstDataRow
+      templateWs.eachRow(row => { if (row.number > firstDataRow) actualLastDataRow = Math.max(actualLastDataRow, row.number) })
       const lastCol = templateWs.columnCount
-      for (let r = firstDataRow + 1; r <= lastRow; r++) {
+      for (let r = firstDataRow + 1; r <= actualLastDataRow; r++) {
         for (let c = skipColumns + 1; c <= lastCol; c++) {
           templateWs.getCell(r, c).value = null
         }
@@ -1157,13 +1187,10 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
         }
         const joinSpec = canvas ? findJoinSpec(targetObjectId, canvas) : null
         if (joinSpec) {
-          const loadRows = (objectId: string): Record<string, string>[] => sourceCache.get(objectId) ?? []
-          let rowsA = loadRows(joinSpec.sourceAId)
-          const filtersA = canvas ? findPreJoinFilters(joinSpec.sourceAId, joinSpec.joinNodeId, canvas) : []
-          if (filtersA.length > 0) rowsA = rowsA.filter(row => filtersA.every(c => evaluateFilterCondition(c, row)))
-          let rowsB = loadRows(joinSpec.sourceBId)
-          const filtersB = canvas ? findPreJoinFilters(joinSpec.sourceBId, joinSpec.joinNodeId, canvas) : []
-          if (filtersB.length > 0) rowsB = rowsB.filter(row => filtersB.every(c => evaluateFilterCondition(c, row)))
+          const edgeA = canvas ? canvas.edges.find(e => e.target === joinSpec.joinNodeId && e.targetHandle === 'input-a') : undefined
+          const edgeB = canvas ? canvas.edges.find(e => e.target === joinSpec.joinNodeId && e.targetHandle === 'input-b') : undefined
+          const rowsA = (canvas && edgeA) ? collectRowsFromNode(edgeA.source, canvas, sourceCache) : []
+          const rowsB = (canvas && edgeB) ? collectRowsFromNode(edgeB.source, canvas, sourceCache) : []
           sourceRows = executeJoin(rowsA, rowsB, joinSpec)
           filterConditions = canvas ? findPostJoinFilters(joinSpec.joinNodeId, targetObjectId, canvas) : []
         } else if (primarySourceObjectId) {
