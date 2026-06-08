@@ -106,11 +106,10 @@ export async function readRawRows(filePath: string, separator?: string): Promise
     return raw
   }
 
-  // .xlsx — use ExcelJS (better formula result handling)
-  const buf = fs.readFileSync(filePath)
+  // .xlsx — use ExcelJS (better formula result handling).
+  // readFile avoids holding a raw Buffer + parsed workbook simultaneously.
   const wb = new ExcelJS.Workbook()
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await wb.xlsx.load(buf as any)
+  await wb.xlsx.readFile(filePath)
   // Use wb.worksheets[0] rather than getWorksheet(1) — the latter looks up by
   // internal worksheet ID which may not be 1 in all Excel files.
   const ws = wb.worksheets[0]
@@ -126,6 +125,7 @@ export async function readRawRows(filePath: string, separator?: string): Promise
   // Some .xlsx files (e.g. Workday templates with frozen panes / special formatting)
   // are not iterable by ExcelJS. Fall back to SheetJS which handles a wider range.
   if (rows.length === 0) {
+    const buf = fs.readFileSync(filePath)
     const sheetJsWb = XLSX.read(buf, { type: 'buffer', cellText: true, cellDates: false })
     const sheetName = sheetJsWb.SheetNames[0]
     if (!sheetName) return []

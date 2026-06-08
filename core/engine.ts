@@ -1257,10 +1257,10 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       // Load the original template, clear the data area, then write transformed
       // rows so preamble rows and column offsets are retained exactly.
       // ExcelJS uses 1-based row/column indices throughout.
-      const templateBuf = fs.readFileSync(templateFilePath!)
+      // readFile + writeFile avoid holding the raw bytes + workbook + output buffer
+      // all in memory simultaneously (the main cause of 2-4GB spikes on large templates).
       const wb = new ExcelJS.Workbook()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await wb.xlsx.load(templateBuf as any)
+      await wb.xlsx.readFile(templateFilePath!)
       const ws = wb.getWorksheet(1)!
 
       // Clear the data area (firstDataRow onwards, skipColumns onwards).
@@ -1282,8 +1282,7 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
         })
       })
 
-      const buf = await wb.xlsx.writeBuffer()
-      fs.writeFileSync(outFilePath, Buffer.from(buf as ArrayBuffer))
+      await wb.xlsx.writeFile(outFilePath)
     } else if (format === 'xlsx') {
       // ── Standard from-scratch XLSX output ────────────────────────────────────
       const wb = new ExcelJS.Workbook()
@@ -1293,8 +1292,7 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       for (const row of outputRows) {
         ws.addRow(targetFields.map(tf => row[tf.id] ?? ''))
       }
-      const buf = await wb.xlsx.writeBuffer()
-      fs.writeFileSync(outFilePath, Buffer.from(buf as ArrayBuffer))
+      await wb.xlsx.writeFile(outFilePath)
     } else {
       const csvEscape = (v: string) =>
         (v.includes(',') || v.includes('"') || v.includes('\n'))
