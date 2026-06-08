@@ -65,6 +65,61 @@ export function findUpstreamByHandle(
   return [...new Set(result)]
 }
 
+// ── Join alias group discovery ────────────────────────────────────────────────
+
+export interface JoinAliasGroup {
+  /** Virtual source ID used as key in fieldsMap — never matches a real DB object. */
+  virtualId: string
+  /** The aliasB prefix (e.g. "j1"). */
+  aliasPrefix: string
+  /** Real source object IDs on the B-side of this join (for field lookup). */
+  bSourceIds: string[]
+}
+
+/**
+ * Walk upstream from nodeId and collect every join node that has aliasB set.
+ * Returns one group per alias, containing the prefixed virtual ID and B-side sources.
+ */
+export function collectJoinAliasGroups(
+  nodeId: string,
+  nodes: Node[],
+  edges: Edge[],
+): JoinAliasGroup[] {
+  const groups: JoinAliasGroup[] = []
+  const seenJoins = new Set<string>()
+
+  function walk(id: string, visited = new Set<string>()) {
+    if (visited.has(id)) return
+    visited.add(id)
+
+    for (const edge of edges) {
+      if (edge.target !== id) continue
+      const srcNode = nodes.find(n => n.id === edge.source)
+      if (!srcNode) continue
+
+      if (srcNode.type === 'joinOperator') {
+        if (!seenJoins.has(srcNode.id)) {
+          seenJoins.add(srcNode.id)
+          const aliasB = ((srcNode.data as Record<string, unknown>).aliasB as string | undefined)?.trim()
+          if (aliasB) {
+            const bEdge = edges.find(e => e.target === srcNode.id && e.targetHandle === 'input-b')
+            const bSourceIds = bEdge ? findUpstreamSourceIds(bEdge.source, nodes, edges) : []
+            if (bSourceIds.length > 0) {
+              groups.push({ virtualId: `_join_alias_${aliasB}`, aliasPrefix: aliasB, bSourceIds })
+            }
+          }
+        }
+        walk(srcNode.id, new Set(visited))
+      } else {
+        walk(srcNode.id, visited)
+      }
+    }
+  }
+
+  walk(nodeId)
+  return groups
+}
+
 // ── SourceFieldPicker ─────────────────────────────────────────────────────────
 
 export function SourceFieldPicker({

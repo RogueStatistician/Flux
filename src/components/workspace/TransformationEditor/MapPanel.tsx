@@ -8,6 +8,7 @@ import type { Node, Edge } from '@xyflow/react'
 import type { DataObject, FieldMapping, ObjectField, Picklist, PicklistMapping } from '../../../types/index.js'
 import {
   findUpstreamSourceIds,
+  collectJoinAliasGroups,
   encodeField,
   decodeField,
   SourceFieldPicker,
@@ -554,13 +555,16 @@ function PicklistMappingHint({
 // ── Broken source-field detection ─────────────────────────────────────────────
 
 /** Resolves the best upstream source ID for a column name.
- *  Prefers the originally-referenced source if still valid; otherwise picks the first match. */
+ *  Prefers the originally-referenced source if still valid; otherwise picks the first match.
+ *  Virtual alias IDs (prefixed with "_join_alias_") are never remapped. */
 function resolveSourceRef(
   sourceObjectId: string,
   sourceFieldName: string,
   upstreamSourceIds: string[],
   fieldsMap: Record<string, ObjectField[]>,
 ): string {
+  // Never remap virtual alias group IDs — they're always valid if in upstreamSourceIds
+  if (sourceObjectId.startsWith('_join_alias_')) return sourceObjectId
   if (upstreamSourceIds.includes(sourceObjectId) && fieldsMap[sourceObjectId]?.some(f => f.name === sourceFieldName))
     return sourceObjectId
   return upstreamSourceIds.find(sid => fieldsMap[sid]?.some(f => f.name === sourceFieldName)) ?? sourceObjectId
@@ -729,6 +733,50 @@ export function MapPanel({
     return labels
   }, [mapNodeId, nodes, edges])
 
+  /** Join alias groups: one virtual field group per join node with aliasB configured. */
+  const joinAliasGroups = useMemo(
+    () => collectJoinAliasGroups(mapNodeId, nodes, edges),
+    [mapNodeId, nodes, edges]
+  )
+
+  /**
+   * Extended fieldsMap: real source fields + virtual prefixed groups for each aliased join.
+   * E.g. for aliasB="j1" on DeptMapping, adds "_join_alias_j1" → [j1_id, j1_name, …].
+   */
+  const extendedFieldsMap = useMemo(() => {
+    if (joinAliasGroups.length === 0) return fieldsMap
+    const map: typeof fieldsMap = { ...fieldsMap }
+    for (const group of joinAliasGroups) {
+      const virtualFields: ObjectField[] = []
+      for (const bId of group.bSourceIds) {
+        for (const f of (fieldsMap[bId] ?? [])) {
+          const prefixedName = `${group.aliasPrefix}_${f.name}`
+          virtualFields.push({ ...f, id: `${group.virtualId}::${prefixedName}`, name: prefixedName })
+        }
+      }
+      map[group.virtualId] = virtualFields
+    }
+    return map
+  }, [fieldsMap, joinAliasGroups])
+
+  /** All upstream IDs including virtual alias groups. */
+  const extendedUpstreamIds = useMemo(
+    () => [...upstreamSourceIds, ...joinAliasGroups.map(g => g.virtualId)],
+    [upstreamSourceIds, joinAliasGroups]
+  )
+
+  /** Group labels including alias groups (e.g. "j1 · DeptMapping"). */
+  const extendedGroupLabels = useMemo(() => {
+    const labels = { ...sourceGroupLabels }
+    for (const group of joinAliasGroups) {
+      const bNames = group.bSourceIds
+        .map(id => sourceObjects.find(o => o.id === id)?.name ?? id)
+        .join(', ')
+      labels[group.virtualId] = `${group.aliasPrefix} · ${bNames}`
+    }
+    return labels
+  }, [sourceGroupLabels, joinAliasGroups, sourceObjects])
+
   const existingMappings = useMemo(
     () => fieldMappings.filter(m =>
       m.mapNodeId === mapNodeId ||
@@ -740,6 +788,20 @@ export function MapPanel({
   const [rules, setRules] = useState<Record<string, FieldRuleState>>(() => {
     // Inline upstream IDs so we can remap stale source refs on open (before useMemo runs)
     const initUpstreamIds = findUpstreamSourceIds(mapNodeId, nodes, edges)
+    const initAliasGroups = collectJoinAliasGroups(mapNodeId, nodes, edges)
+    const initExtendedIds = [...initUpstreamIds, ...initAliasGroups.map(g => g.virtualId)]
+    // Build virtual fieldsMap for alias groups so fixSourceRefs can resolve prefixed field names
+    const initExtendedFieldsMap: typeof fieldsMap = { ...fieldsMap }
+    for (const group of initAliasGroups) {
+      const virtualFields: ObjectField[] = []
+      for (const bId of group.bSourceIds) {
+        for (const f of (fieldsMap[bId] ?? [])) {
+          const prefixedName = `${group.aliasPrefix}_${f.name}`
+          virtualFields.push({ ...f, id: `${group.virtualId}::${prefixedName}`, name: prefixedName })
+        }
+      }
+      initExtendedFieldsMap[group.virtualId] = virtualFields
+    }
     const initMappings = fieldMappings.filter(m =>
       m.mapNodeId === mapNodeId ||
       (!m.mapNodeId && m.targetObjectId === targetObjectId && mapNodeId === `map-${targetObjectId}`)
@@ -749,7 +811,7 @@ export function MapPanel({
       const mapping = initMappings.find(m => m.targetFieldId === field.id)
       if (mapping) {
         const rawConfig = JSON.parse(mapping.ruleConfig) as Record<string, unknown>
-        const remappedConfig = fixSourceRefs(mapping.ruleType, rawConfig, initUpstreamIds, fieldsMap)
+        const remappedConfig = fixSourceRefs(mapping.ruleType, rawConfig, initExtendedIds, initExtendedFieldsMap)
         initial[field.id] = { ruleType: mapping.ruleType, config: remappedConfig }
       } else {
         initial[field.id] = { ruleType: '', config: {} }
@@ -808,7 +870,7 @@ export function MapPanel({
           if (rule.ruleType === '') {
             return existing ? platform.deleteFieldMapping(existing.id) : Promise.resolve()
           }
-          const remappedRule = { ...rule, config: fixSourceRefs(rule.ruleType, rule.config, upstreamSourceIds, fieldsMap) }
+          const remappedRule = { ...rule, config: fixSourceRefs(rule.ruleType, rule.config, extendedUpstreamIds, extendedFieldsMap) }
           const finalConfig = enrichConfig(field, remappedRule)
           return platform.createFieldMapping(
             transformationId,
@@ -830,7 +892,12 @@ export function MapPanel({
     }
   }
 
-  const sharedEditorProps = { upstreamSourceIds, sourceObjects, fieldsMap, sourceGroupLabels }
+  const sharedEditorProps = {
+    upstreamSourceIds: extendedUpstreamIds,
+    sourceObjects,
+    fieldsMap: extendedFieldsMap,
+    sourceGroupLabels: extendedGroupLabels,
+  }
 
   return (
     // Fixed full-viewport backdrop
@@ -906,7 +973,7 @@ export function MapPanel({
               const rule = rules[field.id] ?? { ruleType: '', config: {} }
               const isMapped = rule.ruleType !== ''
               const brokenRefs = rule.ruleType
-                ? findBrokenSourceRefs(rule.ruleType, rule.config, upstreamSourceIds, fieldsMap)
+                ? findBrokenSourceRefs(rule.ruleType, rule.config, extendedUpstreamIds, extendedFieldsMap)
                 : []
 
               return (

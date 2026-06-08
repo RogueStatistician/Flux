@@ -143,7 +143,7 @@ async function buildSourceCache(
     if (!sourceRefTypes.has(fm.rule_type)) continue
     try {
       const cfg = JSON.parse(fm.rule_config) as { sourceObjectId?: string }
-      if (cfg.sourceObjectId && !cache.has(cfg.sourceObjectId)) {
+      if (cfg.sourceObjectId && !cache.has(cfg.sourceObjectId) && !cfg.sourceObjectId.startsWith('_join_alias_')) {
         cache.set(cfg.sourceObjectId, await loadSourceObjectRows(cfg.sourceObjectId, db))
       }
     } catch { /* skip malformed config */ }
