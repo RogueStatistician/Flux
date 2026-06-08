@@ -116,10 +116,11 @@ export async function readRawRows(filePath: string, separator?: string): Promise
   if (!ws) return []
 
   const rows: string[][] = []
-  ws.eachRow({ includeEmpty: true }, row => {
+  ws.eachRow(row => {
     // row.values[0] is undefined (ExcelJS uses 1-based indexing)
     const vals = (row.values as (ExcelJS.CellValue | undefined)[]).slice(1)
-    rows.push(vals.map(v => cellToString(v ?? null)))
+    const stringVals = vals.map(v => cellToString(v ?? null))
+    if (stringVals.some(v => v !== '')) rows.push(stringVals)
   })
 
   // Some .xlsx files (e.g. Workday templates with frozen panes / special formatting)
