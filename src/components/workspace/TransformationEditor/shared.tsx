@@ -102,8 +102,10 @@ export function collectJoinAliasGroups(
           seenJoins.add(srcNode.id)
           const aliasB = ((srcNode.data as Record<string, unknown>).aliasB as string | undefined)?.trim()
           if (aliasB) {
-            const bEdge = edges.find(e => e.target === srcNode.id && e.targetHandle === 'input-b')
-            const bSourceIds = bEdge ? findUpstreamSourceIds(bEdge.source, nodes, edges) : []
+            // findUpstreamByHandle correctly handles the case where the B-side edge
+            // connects directly to a sourceObject node (reads objectId instead of
+            // looking for incoming edges, which sourceObjects don't have).
+            const bSourceIds = findUpstreamByHandle(srcNode.id, 'input-b', nodes, edges)
             if (bSourceIds.length > 0) {
               groups.push({ virtualId: `_join_alias_${aliasB}`, aliasPrefix: aliasB, bSourceIds })
             }
