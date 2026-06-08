@@ -759,11 +759,15 @@ export function MapPanel({
     return map
   }, [fieldsMap, joinAliasGroups])
 
-  /** All upstream IDs including virtual alias groups. */
-  const extendedUpstreamIds = useMemo(
-    () => [...upstreamSourceIds, ...joinAliasGroups.map(g => g.virtualId)],
-    [upstreamSourceIds, joinAliasGroups]
-  )
+  /** All upstream IDs including virtual alias groups.
+   *  B-side sources that are fully exposed through an alias are removed from the
+   *  direct list so the picker only shows the prefixed alias group (j1_*, j2_*),
+   *  not the raw source alongside it. */
+  const extendedUpstreamIds = useMemo(() => {
+    const aliasedBIds = new Set(joinAliasGroups.flatMap(g => g.bSourceIds))
+    const filtered = upstreamSourceIds.filter(id => !aliasedBIds.has(id))
+    return [...filtered, ...joinAliasGroups.map(g => g.virtualId)]
+  }, [upstreamSourceIds, joinAliasGroups])
 
   /** Group labels including alias groups (e.g. "j1 · DeptMapping"). */
   const extendedGroupLabels = useMemo(() => {
@@ -789,7 +793,9 @@ export function MapPanel({
     // Inline upstream IDs so we can remap stale source refs on open (before useMemo runs)
     const initUpstreamIds = findUpstreamSourceIds(mapNodeId, nodes, edges)
     const initAliasGroups = collectJoinAliasGroups(mapNodeId, nodes, edges)
-    const initExtendedIds = [...initUpstreamIds, ...initAliasGroups.map(g => g.virtualId)]
+    const initAliasedBIds = new Set(initAliasGroups.flatMap(g => g.bSourceIds))
+    const initFilteredUpstream = initUpstreamIds.filter(id => !initAliasedBIds.has(id))
+    const initExtendedIds = [...initFilteredUpstream, ...initAliasGroups.map(g => g.virtualId)]
     // Build virtual fieldsMap for alias groups so fixSourceRefs can resolve prefixed field names
     const initExtendedFieldsMap: typeof fieldsMap = { ...fieldsMap }
     for (const group of initAliasGroups) {
