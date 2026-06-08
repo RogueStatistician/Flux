@@ -2,7 +2,7 @@
  * Picklists service — CRUD for picklists + picklist_values.
  */
 import ExcelJS from 'exceljs'
-import { getDb } from '../db.js'
+import { getDb, getCurrentProjectId } from '../db.js'
 import { parseFile, parseAllSheets } from '../importer.js'
 
 // ── Row types ──────────────────────────────────────────────────────────────────
@@ -47,19 +47,12 @@ function rowToValue(r: PicklistValueRow) {
   }
 }
 
-function getProjectId(): string {
-  const db = getDb()
-  const row = db.prepare('SELECT id FROM projects LIMIT 1').get() as { id: string } | undefined
-  if (!row) throw new Error('No project is open.')
-  return row.id
-}
-
 // ── Service functions ─────────────────────────────────────────────────────────
 
 /** Create a new picklist. */
 export function createPicklist(side: 'source' | 'target', name: string, description?: string) {
   const db = getDb()
-  const projectId = getProjectId()
+  const projectId = getCurrentProjectId()
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
 
@@ -76,7 +69,7 @@ export function createPicklist(side: 'source' | 'target', name: string, descript
 /** List picklists for the current project, optionally filtered by side. */
 export function listPicklists(side?: 'source' | 'target') {
   const db = getDb()
-  const projectId = getProjectId()
+  const projectId = getCurrentProjectId()
   const rows = side
     ? db.prepare('SELECT * FROM picklists WHERE project_id = ? AND side = ? ORDER BY created_at ASC').all(projectId, side) as PicklistRow[]
     : db.prepare('SELECT * FROM picklists WHERE project_id = ? ORDER BY created_at ASC').all(projectId) as PicklistRow[]
@@ -172,7 +165,7 @@ export async function importPicklistFromFile(id: string, filePath: string, keyCo
  */
 export async function bulkImportPicklistsFromFile(filePath: string, side: 'source' | 'target') {
   const db = getDb()
-  const projectId = getProjectId()
+  const projectId = getCurrentProjectId()
   const sheets = await parseAllSheets(filePath)
 
   const results: Array<{ name: string; created: boolean; valueCount: number }> = []
@@ -246,7 +239,7 @@ export async function bulkImportPicklistsFromFile(filePath: string, side: 'sourc
  */
 export async function exportPicklistsToBuffer(side?: 'source' | 'target'): Promise<Buffer> {
   const db = getDb()
-  const projectId = getProjectId()
+  const projectId = getCurrentProjectId()
 
   const lists = side
     ? (db.prepare('SELECT * FROM picklists WHERE project_id = ? AND side = ? ORDER BY name ASC').all(projectId, side) as PicklistRow[])

@@ -157,12 +157,24 @@ export interface MappingLine {
   ruleType: string
   description: string
   notes?: string
+  rawConfig: string
+}
+
+export interface JoinInfo {
+  joinType: 'inner' | 'left' | 'right'
+  leftSource: string
+  leftRowCount: number | null
+  leftKey: string
+  rightSource: string
+  rightRowCount: number | null
+  rightKey: string
 }
 
 export interface QueryPath {
   mapNodeId: string | null
   sourceObject: string | null
   sourceRowCount: number | null
+  join?: JoinInfo
   filters: string[]
   mappings: MappingLine[]
 }

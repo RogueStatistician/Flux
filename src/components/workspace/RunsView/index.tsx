@@ -2,6 +2,92 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { platform } from '@/platform/index'
 import type { Transformation, Run, RunIssue } from '../../../types/index.js'
 import type { RunProgressEvent, OutputManifestTarget } from '../../../electron.d.js'
+import type { TransformationQuery } from '../../../platform/IPlatform.js'
+import { generateSqlPreview } from '../../../utils/sqlPreview.js'
+
+// ── SQL Preview modal ─────────────────────────────────────────────────────────
+
+function SqlPreviewModal({
+  transformationId,
+  onClose,
+}: {
+  transformationId: string
+  onClose: () => void
+}) {
+  const [queries, setQueries] = useState<TransformationQuery[] | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    platform.renderTransformationQuery(transformationId)
+      .then(q => { setQueries(q); setLoading(false) })
+      .catch(err => { setError(String(err)); setLoading(false) })
+  }, [transformationId])
+
+  const sqlText = queries ? generateSqlPreview(queries) : ''
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(sqlText).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden"
+        style={{ width: 'min(95vw, 900px)', maxHeight: '88vh' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-5 py-3.5 border-b flex items-center justify-between shrink-0">
+          <div>
+            <p className="text-sm font-semibold text-gray-800">Query preview</p>
+            <p className="text-xs text-gray-400 mt-0.5">Pseudo-SQL representation of the transformation logic</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {!loading && !error && (
+              <button
+                onClick={handleCopy}
+                className="text-xs px-3 py-1.5 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                {copied ? '✓ Copied' : 'Copy'}
+              </button>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none ml-1">✕</button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-auto">
+          {loading && (
+            <div className="flex items-center justify-center h-40 text-sm text-gray-400">
+              Generating preview…
+            </div>
+          )}
+          {error && (
+            <div className="m-4 text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</div>
+          )}
+          {!loading && !error && queries && queries.length === 0 && (
+            <div className="flex items-center justify-center h-40 text-sm text-gray-400">
+              No field mappings defined yet.
+            </div>
+          )}
+          {!loading && !error && sqlText && (
+            <pre
+              className="text-xs font-mono leading-relaxed p-5 text-gray-800 whitespace-pre overflow-x-auto"
+              style={{ tabSize: 4 }}
+            >
+              {sqlText}
+            </pre>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -313,6 +399,7 @@ export function RunsView() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [progress, setProgress] = useState<RunProgressEvent | null>(null)
   const [detailRun, setDetailRun] = useState<Run | null>(null)
+  const [showSqlPreview, setShowSqlPreview] = useState(false)
 
   const unsubRef = useRef<(() => void) | null>(null)
 
@@ -424,6 +511,16 @@ export function RunsView() {
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
+
+            {/* Preview SQL button */}
+            <button
+              onClick={() => setShowSqlPreview(true)}
+              disabled={!selectedTransId || loading}
+              className="px-3 py-2 border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40"
+              title="Preview transformation as SQL"
+            >
+              SQL
+            </button>
 
             {/* Run button */}
             <button
@@ -555,6 +652,11 @@ export function RunsView() {
       {/* Detail overlay */}
       {detailRun && (
         <RunDetailPanel run={detailRun} onClose={() => setDetailRun(null)} />
+      )}
+
+      {/* SQL preview overlay */}
+      {showSqlPreview && selectedTransId && (
+        <SqlPreviewModal transformationId={selectedTransId} onClose={() => setShowSqlPreview(false)} />
       )}
     </div>
   )

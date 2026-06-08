@@ -23,12 +23,25 @@ export interface MappingLine {
   /** Human-readable description of the rule. */
   description: string
   notes?: string
+  /** Raw JSON config string — used for SQL preview generation. */
+  rawConfig: string
+}
+
+export interface JoinInfo {
+  joinType: 'inner' | 'left' | 'right'
+  leftSource: string
+  leftRowCount: number | null
+  leftKey: string
+  rightSource: string
+  rightRowCount: number | null
+  rightKey: string
 }
 
 export interface QueryPath {
   mapNodeId: string | null
   sourceObject: string | null
   sourceRowCount: number | null
+  join?: JoinInfo
   filters: string[]
   mappings: MappingLine[]
 }
@@ -101,7 +114,7 @@ export function executeRawQuery(sql: string): TableQueryResult {
 // ── Transformation query renderer ─────────────────────────────────────────────
 
 interface CanvasNode { id: string; type?: string; data?: Record<string, unknown> }
-interface CanvasEdge { id: string; source: string; target: string }
+interface CanvasEdge { id: string; source: string; target: string; targetHandle?: string }
 interface Canvas { nodes: CanvasNode[]; edges: CanvasEdge[] }
 
 interface FieldMappingRow {
@@ -117,7 +130,26 @@ interface FieldMappingRow {
 
 interface ObjectRow { id: string; name: string; row_count: number | null }
 interface ObjectFieldRow { id: string; name: string; position: number }
-interface FilterNodeData { field?: string; operator?: string; value?: string; sourceObjectId?: string }
+interface FilterCondition { field: string; op: string; value: string }
+interface FilterNodeData { conditions?: FilterCondition[] }
+
+function conditionToSql(fieldName: string, op: string, value: string): string {
+  switch (op) {
+    case '=':           return `${fieldName} = '${value}'`
+    case '!=':          return `${fieldName} <> '${value}'`
+    case '>':           return `${fieldName} > '${value}'`
+    case '<':           return `${fieldName} < '${value}'`
+    case '>=':          return `${fieldName} >= '${value}'`
+    case '<=':          return `${fieldName} <= '${value}'`
+    case 'contains':    return `${fieldName} LIKE '%${value}%'`
+    case 'not_contains':return `${fieldName} NOT LIKE '%${value}%'`
+    case 'starts_with': return `${fieldName} LIKE '${value}%'`
+    case 'ends_with':   return `${fieldName} LIKE '%${value}'`
+    case 'is_empty':    return `(${fieldName} IS NULL OR ${fieldName} = '')`
+    case 'is_not_empty':return `(${fieldName} IS NOT NULL AND ${fieldName} <> '')`
+    default:            return `${fieldName} ${op} '${value}'`
+  }
+}
 
 /** Produce a human-readable label for a field mapping rule. */
 function describeRule(ruleType: string, rawConfig: string): string {
@@ -186,45 +218,121 @@ function describeRule(ruleType: string, rawConfig: string): string {
   }
 }
 
-/** Find the source object ID by walking canvas edges from a map node. */
-function findSourceObjectId(mapNodeId: string, canvas: Canvas): string | null {
-  // Walk edges: mapNode ← ... ← sourceObject node
-  const visited = new Set<string>()
-  const queue = [mapNodeId]
-  while (queue.length > 0) {
-    const current = queue.shift()!
-    if (visited.has(current)) continue
-    visited.add(current)
-    // Find what connects INTO `current`
-    for (const edge of canvas.edges) {
-      if (edge.target === current) {
-        const sourceNode = canvas.nodes.find(n => n.id === edge.source)
-        if (!sourceNode) continue
-        if (sourceNode.type === 'sourceObject') {
-          return (sourceNode.data?.objectId as string) ?? null
-        }
-        // Continue walking upstream
-        queue.push(edge.source)
-      }
-    }
+/** Walk upstream from nodeId through any handle, returning the first sourceObject ID found. */
+function findAnySourceObjectId(nodeId: string, canvas: Canvas, visited = new Set<string>()): string | null {
+  if (visited.has(nodeId)) return null
+  visited.add(nodeId)
+  for (const edge of canvas.edges) {
+    if (edge.target !== nodeId) continue
+    const src = canvas.nodes.find(n => n.id === edge.source)
+    if (!src) continue
+    if (src.type === 'sourceObject') return (src.data?.objectId as string) ?? null
+    const found = findAnySourceObjectId(src.id, canvas, visited)
+    if (found) return found
   }
   return null
 }
 
-/** Extract filter conditions visible on canvas edges going into a map node. */
-function findFilterDescriptions(mapNodeId: string, canvas: Canvas): string[] {
+/** Walk upstream from a join node via a specific handle, returning the first sourceObject ID. */
+function findSourceIdByHandle(joinNodeId: string, handleId: string, canvas: Canvas): string | null {
+  for (const edge of canvas.edges) {
+    if (edge.target !== joinNodeId || edge.targetHandle !== handleId) continue
+    const src = canvas.nodes.find(n => n.id === edge.source)
+    if (!src) continue
+    if (src.type === 'sourceObject') return (src.data?.objectId as string) ?? null
+    return findAnySourceObjectId(src.id, canvas)
+  }
+  return null
+}
+
+interface PathSource {
+  sourceObjectId: string | null
+  join: JoinInfo | null
+}
+
+/** Resolve the data source(s) for a map node, handling direct, join, and append paths. */
+function resolvePathSource(mapNodeId: string, canvas: Canvas): PathSource {
+  const db = getDb()
+
+  function resolveObjectName(id: string): { name: string; rowCount: number | null } {
+    const row = db.prepare('SELECT name, row_count FROM data_objects WHERE id = ?').get(id) as
+      | { name: string; row_count: number | null } | undefined
+    return row ? { name: row.name, rowCount: row.row_count } : { name: id, rowCount: null }
+  }
+
+  function stripKey(encoded: string): string {
+    const sep = encoded.indexOf('::')
+    return sep >= 0 ? encoded.slice(sep + 2) : encoded
+  }
+
+  // Walk upstream; stop when we hit sourceObject or joinOperator
+  function walk(nodeId: string, visited = new Set<string>()): PathSource {
+    if (visited.has(nodeId)) return { sourceObjectId: null, join: null }
+    visited.add(nodeId)
+
+    for (const edge of canvas.edges) {
+      if (edge.target !== nodeId) continue
+      const src = canvas.nodes.find(n => n.id === edge.source)
+      if (!src) continue
+
+      if (src.type === 'sourceObject') {
+        return { sourceObjectId: (src.data?.objectId as string) ?? null, join: null }
+      }
+
+      if (src.type === 'joinOperator') {
+        const aId = findSourceIdByHandle(src.id, 'input-a', canvas)
+        const bId = findSourceIdByHandle(src.id, 'input-b', canvas)
+        if (!aId || !bId) return { sourceObjectId: aId ?? bId, join: null }
+
+        const aObj = resolveObjectName(aId)
+        const bObj = resolveObjectName(bId)
+        const rawKeyA = (src.data?.joinKeyA as string) ?? ''
+        const rawKeyB = (src.data?.joinKeyB as string) ?? ''
+
+        return {
+          sourceObjectId: aId,
+          join: {
+            joinType: (src.data?.joinType as 'inner' | 'left' | 'right') ?? 'left',
+            leftSource: aObj.name,
+            leftRowCount: aObj.rowCount,
+            leftKey: stripKey(rawKeyA),
+            rightSource: bObj.name,
+            rightRowCount: bObj.rowCount,
+            rightKey: stripKey(rawKeyB),
+          },
+        }
+      }
+
+      // Pass through filter/dedup/append — keep walking
+      const result = walk(src.id, visited)
+      if (result.sourceObjectId || result.join) return result
+    }
+
+    return { sourceObjectId: null, join: null }
+  }
+
+  return walk(mapNodeId)
+}
+
+/** Extract filter conditions visible on canvas edges going into a node. */
+function findFilterDescriptions(nodeId: string, canvas: Canvas): string[] {
   const filters: string[] = []
   for (const edge of canvas.edges) {
-    if (edge.target === mapNodeId) {
+    if (edge.target === nodeId) {
       const upstream = canvas.nodes.find(n => n.id === edge.source)
-      if (upstream?.type === 'filterOperator') {
-        const d = upstream.data as FilterNodeData
-        if (d?.field) {
-          filters.push(`${d.field} ${d.operator ?? '='} "${d.value ?? ''}"`)
+      if (!upstream) continue
+      if (upstream.type === 'filterOperator') {
+        const d = upstream.data as unknown as FilterNodeData
+        for (const cond of d.conditions ?? []) {
+          // field is encoded as "objectId::fieldName" — strip the prefix
+          const fieldName = cond.field.includes('::') ? cond.field.split('::')[1] : cond.field
+          if (fieldName) filters.push(conditionToSql(fieldName, cond.op, cond.value))
         }
-        // Recurse to find more filters upstream
-        const moreFilters = findFilterDescriptions(upstream.id, canvas)
-        filters.push(...moreFilters)
+        // Recurse upstream to collect chained filters
+        filters.push(...findFilterDescriptions(upstream.id, canvas))
+      } else {
+        // Walk through non-filter operators (join, append, dedup) to find filters further upstream
+        filters.push(...findFilterDescriptions(upstream.id, canvas))
       }
     }
   }
@@ -301,11 +409,18 @@ export function renderTransformationQuery(transformationId: string): Transformat
           }
         }
 
-        const sourceObjectId = canvas ? findSourceObjectId(mapNodeId, canvas) : null
+        const { sourceObjectId, join } = canvas
+          ? resolvePathSource(mapNodeId, canvas)
+          : { sourceObjectId: null, join: null }
+
         let sourceObject: string | null = null
         let sourceRowCount: number | null = null
 
-        if (sourceObjectId) {
+        if (join) {
+          // For joins, use the left source as primary; join info has both sides
+          sourceObject = join.leftSource
+          sourceRowCount = join.leftRowCount
+        } else if (sourceObjectId) {
           const srcObj = db.prepare(
             'SELECT name, row_count FROM data_objects WHERE id = ?'
           ).get(sourceObjectId) as { name: string; row_count: number | null } | undefined
@@ -313,7 +428,7 @@ export function renderTransformationQuery(transformationId: string): Transformat
         }
 
         // If no canvas source found, try to infer from rule configs
-        if (!sourceObject) {
+        if (!sourceObject && !join) {
           const sourceRefTypes = new Set(['direct', 'concat', 'split', 'substring', 'dateformat', 'picklisttranslate', 'expression'])
           for (const fm of mappings) {
             if (sourceRefTypes.has(fm.rule_type)) {
@@ -334,16 +449,17 @@ export function renderTransformationQuery(transformationId: string): Transformat
 
         const mappingLines: MappingLine[] = targetFields.map(tf => {
           const fm = fmByFieldId.get(tf.id)
-          if (!fm) return { targetField: tf.name, ruleType: 'unmapped', description: '(unmapped)' }
+          if (!fm) return { targetField: tf.name, ruleType: 'unmapped', description: '(unmapped)', rawConfig: '{}' }
           return {
             targetField: tf.name,
             ruleType: fm.rule_type,
             description: describeRule(fm.rule_type, fm.rule_config),
             notes: fm.notes ?? undefined,
+            rawConfig: fm.rule_config,
           }
         })
 
-        paths.push({ mapNodeId, sourceObject, sourceRowCount, filters, mappings: mappingLines })
+        paths.push({ mapNodeId, sourceObject, sourceRowCount, join: join ?? undefined, filters, mappings: mappingLines })
       }
     } else {
       // Legacy: merge all mappings for this target
@@ -375,12 +491,13 @@ export function renderTransformationQuery(transformationId: string): Transformat
 
       const mappingLines: MappingLine[] = targetFields.map(tf => {
         const fm = fmByFieldId.get(tf.id)
-        if (!fm) return { targetField: tf.name, ruleType: 'unmapped', description: '(unmapped)' }
+        if (!fm) return { targetField: tf.name, ruleType: 'unmapped', description: '(unmapped)', rawConfig: '{}' }
         return {
           targetField: fieldById.get(tf.id) ?? tf.name,
           ruleType: fm.rule_type,
           description: describeRule(fm.rule_type, fm.rule_config),
           notes: fm.notes ?? undefined,
+          rawConfig: fm.rule_config,
         }
       })
 

@@ -259,10 +259,11 @@ export function applyExpression(
   cfg: { expression: string },
   row: Record<string, string>,
   rowIndex: number,
+  compiledFn?: (row: Record<string, string>, rowIndex: number) => unknown,
 ): string {
   try {
     // eslint-disable-next-line no-new-func
-    const fn = new Function('row', 'rowIndex', `"use strict"; return (${cfg.expression})`)
+    const fn = compiledFn ?? new Function('row', 'rowIndex', `"use strict"; return (${cfg.expression})`) as (row: Record<string, string>, rowIndex: number) => unknown
     const result = fn(row, rowIndex)
     return result !== undefined && result !== null ? String(result) : ''
   } catch {
@@ -1085,6 +1086,22 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
         }
       }
 
+      // Pre-parse rule configs and compile expression functions once — not per row
+      type PreparedMapping = { fm: FieldMappingRow; cfg: Record<string, unknown>; compiledFn?: (row: Record<string, string>, rowIndex: number) => unknown }
+      const preparedByFieldId = new Map<string, PreparedMapping>()
+      for (const [fieldId, fm] of fmByFieldId) {
+        let cfg: Record<string, unknown> = {}
+        let compiledFn: PreparedMapping['compiledFn']
+        try { cfg = JSON.parse(fm.rule_config) as Record<string, unknown> } catch { /* keep empty */ }
+        if (fm.rule_type === 'expression') {
+          try {
+            // eslint-disable-next-line no-new-func
+            compiledFn = new Function('row', 'rowIndex', `"use strict"; return (${(cfg as { expression?: string }).expression ?? ''})`) as PreparedMapping['compiledFn']
+          } catch { /* compiledFn stays undefined; applyExpression falls back gracefully */ }
+        }
+        preparedByFieldId.set(fieldId, { fm, cfg, compiledFn })
+      }
+
       // Determine source rows and filter conditions for this path
       let sourceRows: Record<string, string>[] = []
       let filterConditions: FilterCondition[] = []
@@ -1125,8 +1142,9 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       }
 
       if (sourceRows.length === 0) sourceRows = [{}]
+      const rowCount = sourceRows.length
 
-      for (let i = 0; i < sourceRows.length; i++) {
+      for (let i = 0; i < rowCount; i++) {
         if (runState.cancelled) break
         const srcRow = sourceRows[i]
         if (filterConditions.length > 0 && !filterConditions.every(c => evaluateFilterCondition(c, srcRow))) continue
@@ -1147,8 +1165,8 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
         // Keying by name would cause later sections to silently overwrite earlier values.
         const outRow: Record<string, string> = {}
         for (const tf of targetFields) {
-          const fm = fmByFieldId.get(tf.id)
-          if (!fm) {
+          const prepared = preparedByFieldId.get(tf.id)
+          if (!prepared) {
             if (tf.is_required) {
               insertIssue.run(runId, i, tf.name, 'warning', `Required field "${tf.name}" has no mapping`)
               totalIssues++
@@ -1156,13 +1174,13 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
             outRow[tf.id] = ''
             continue
           }
+          const { fm, cfg, compiledFn } = prepared
           let value = ''
           try {
-            const cfg = JSON.parse(fm.rule_config)
             switch (fm.rule_type) {
               case 'direct': {
                 // Step 1: raw source value
-                const raw = applyDirect(cfg, srcRow)
+                const raw = applyDirect(cfg as { sourceFieldName: string }, srcRow)
                 // Step 2: translate source_key → target_key via picklist mapping (left join)
                 const mid = (cfg as { picklistMappingId?: string }).picklistMappingId
                 const targetKey = mid ? (picklistMaps.get(mid)?.get(raw) ?? raw) : raw
@@ -1174,16 +1192,16 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
                   : targetKey
                 break
               }
-              case 'constant':           value = applyConstant(cfg); break
+              case 'constant':           value = applyConstant(cfg as { value: string }); break
               case 'uuid':               value = applyUUID(); break
-              case 'concat':             value = applyConcat(cfg, srcRow); break
-              case 'split':              value = applySplit(cfg, srcRow); break
-              case 'substring':          value = applySubstring(cfg, srcRow); break
-              case 'dateformat':         value = applyDateFormat(cfg, srcRow); break
-              case 'picklisttranslate':  value = applyPicklistTranslate(cfg, srcRow, picklistMaps); break
-              case 'expression':         value = applyExpression(cfg, srcRow, outputRows.length); break
-              case 'incremental':        value = applyIncremental(cfg, outputRows.length); break
-              case 'conditional':        value = applyConditional(cfg, srcRow); break
+              case 'concat':             value = applyConcat(cfg as Parameters<typeof applyConcat>[0], srcRow); break
+              case 'split':              value = applySplit(cfg as Parameters<typeof applySplit>[0], srcRow); break
+              case 'substring':          value = applySubstring(cfg as Parameters<typeof applySubstring>[0], srcRow); break
+              case 'dateformat':         value = applyDateFormat(cfg as Parameters<typeof applyDateFormat>[0], srcRow); break
+              case 'picklisttranslate':  value = applyPicklistTranslate(cfg as Parameters<typeof applyPicklistTranslate>[0], srcRow, picklistMaps); break
+              case 'expression':         value = applyExpression(cfg as { expression: string }, srcRow, outputRows.length, compiledFn); break
+              case 'incremental':        value = applyIncremental(cfg as Parameters<typeof applyIncremental>[0], outputRows.length); break
+              case 'conditional':        value = applyConditional(cfg as Parameters<typeof applyConditional>[0], srcRow); break
               default:                   value = ''
             }
           } catch (err) {
@@ -1203,6 +1221,9 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
           await new Promise<void>(resolve => setImmediate(resolve))
         }
       }
+
+      // Allow GC to collect the (potentially large) joined row set before writing output
+      sourceRows = []
     }
 
     totalRowsProcessed += outputRows.length
@@ -1275,17 +1296,15 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
       const buf = await wb.xlsx.writeBuffer()
       fs.writeFileSync(outFilePath, Buffer.from(buf as ArrayBuffer))
     } else {
-      const headers = targetFields.map(f => f.name)
-      const csvLines = [headers.join(',')]
+      const csvEscape = (v: string) =>
+        (v.includes(',') || v.includes('"') || v.includes('\n'))
+          ? `"${v.replace(/"/g, '""')}"` : v
+      const fd = fs.openSync(outFilePath, 'w')
+      fs.writeSync(fd, targetFields.map(f => csvEscape(f.name)).join(',') + '\n', null, 'utf-8')
       for (const row of outputRows) {
-        csvLines.push(targetFields.map(tf => {
-          const v = row[tf.id] ?? ''
-          return (v.includes(',') || v.includes('"') || v.includes('\n'))
-            ? `"${v.replace(/"/g, '""')}"`
-            : v
-        }).join(','))
+        fs.writeSync(fd, targetFields.map(tf => csvEscape(row[tf.id] ?? '')).join(',') + '\n', null, 'utf-8')
       }
-      fs.writeFileSync(outFilePath, csvLines.join('\n'), 'utf-8')
+      fs.closeSync(fd)
     }
 
     manifest.targets.push({

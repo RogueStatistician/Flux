@@ -2,7 +2,7 @@
  * Objects service — CRUD for data_objects, object_fields, source_rows.
  */
 import fs from 'fs'
-import { getDb } from '../db.js'
+import { getDb, getCurrentProjectId } from '../db.js'
 import { parseFile, parseHeaders, readRawRows, detectBestHeaderRow, inferSchema, type ParseOptions } from '../importer.js'
 
 /** Maximum number of rows stored in source_rows for preview purposes. */
@@ -92,13 +92,6 @@ function rowToField(r: FieldRow) {
   }
 }
 
-function getProjectId(): string {
-  const db = getDb()
-  const row = db.prepare('SELECT id FROM projects LIMIT 1').get() as { id: string } | undefined
-  if (!row) throw new Error('No project is open.')
-  return row.id
-}
-
 // ── Service functions ─────────────────────────────────────────────────────────
 
 /** Infer schema from an Excel/CSV file without touching the DB. */
@@ -155,7 +148,7 @@ export function createObject(
   }
 ) {
   const db = getDb()
-  const projectId = getProjectId()
+  const projectId = getCurrentProjectId()
 
   const dup = db.prepare('SELECT COUNT(*) as c FROM data_objects WHERE project_id = ? AND role = ? AND name = ?').get(projectId, role, name) as { c: number }
   if (dup.c > 0) throw new Error(`A ${role} named "${name}" already exists.`)
@@ -187,7 +180,7 @@ export function createObject(
 /** List all data objects for the current project, optionally filtered by role. */
 export function listObjects(role?: 'source' | 'target') {
   const db = getDb()
-  const projectId = getProjectId()
+  const projectId = getCurrentProjectId()
   const rows = role
     ? db.prepare('SELECT * FROM data_objects WHERE project_id = ? AND role = ? ORDER BY created_at ASC').all(projectId, role) as ObjectRow[]
     : db.prepare('SELECT * FROM data_objects WHERE project_id = ? ORDER BY created_at ASC').all(projectId) as ObjectRow[]

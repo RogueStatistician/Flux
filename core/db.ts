@@ -120,6 +120,17 @@ export function getCurrentFilePath(userId: string): string | null {
   return (db as unknown as { name: string }).name ?? null
 }
 
+/**
+ * Return the ID of the single project in the currently open database.
+ * Throws if no project is open or the database contains no project record.
+ * Used by every service function that needs to scope queries to the active project.
+ */
+export function getCurrentProjectId(): string {
+  const row = getDb().prepare('SELECT id FROM projects LIMIT 1').get() as { id: string } | undefined
+  if (!row) throw new Error('No project is open.')
+  return row.id
+}
+
 /** Return all currently open user sessions (userId → filePath). */
 export function getAllOpenSessions(): Map<string, string> {
   const result = new Map<string, string>()

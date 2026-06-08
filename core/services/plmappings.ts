@@ -2,7 +2,7 @@
  * Picklist Mappings service — CRUD for picklist_mappings + picklist_mapping_entries.
  */
 import ExcelJS from 'exceljs'
-import { getDb } from '../db.js'
+import { getDb, getCurrentProjectId } from '../db.js'
 import { parseFile, parseAllSheets } from '../importer.js'
 
 // ── Row types ──────────────────────────────────────────────────────────────────
@@ -45,19 +45,12 @@ function rowToEntry(r: EntryRow) {
   }
 }
 
-function getProjectId(): string {
-  const db = getDb()
-  const row = db.prepare('SELECT id FROM projects LIMIT 1').get() as { id: string } | undefined
-  if (!row) throw new Error('No project is open.')
-  return row.id
-}
-
 // ── Service functions ─────────────────────────────────────────────────────────
 
 /** Create a new picklist mapping. */
 export function createPlMapping(name: string, sourcePicklistId?: string, targetPicklistId?: string) {
   const db = getDb()
-  const projectId = getProjectId()
+  const projectId = getCurrentProjectId()
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
 
@@ -74,7 +67,7 @@ export function createPlMapping(name: string, sourcePicklistId?: string, targetP
 /** List all picklist mappings for the current project. */
 export function listPlMappings() {
   const db = getDb()
-  const projectId = getProjectId()
+  const projectId = getCurrentProjectId()
   const rows = db.prepare(
     'SELECT * FROM picklist_mappings WHERE project_id = ? ORDER BY created_at ASC'
   ).all(projectId) as MappingRow[]
@@ -174,7 +167,7 @@ export async function importPlMappingEntriesFromFile(id: string, filePath: strin
  */
 export async function bulkImportPlMappingsFromFile(filePath: string) {
   const db = getDb()
-  const projectId = getProjectId()
+  const projectId = getCurrentProjectId()
   const sheets = await parseAllSheets(filePath)
 
   const results: Array<{ name: string; created: boolean; entryCount: number }> = []
@@ -251,7 +244,7 @@ export async function bulkImportPlMappingsFromFile(filePath: string) {
  */
 export async function exportPlMappingsToBuffer(): Promise<Buffer> {
   const db = getDb()
-  const projectId = getProjectId()
+  const projectId = getCurrentProjectId()
 
   const mappings = db.prepare(
     'SELECT * FROM picklist_mappings WHERE project_id = ? ORDER BY name ASC'

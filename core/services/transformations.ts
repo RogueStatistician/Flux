@@ -1,7 +1,7 @@
 /**
  * Transformations service — CRUD for transformations, canvas state, and field mapping rules.
  */
-import { getDb } from '../db.js'
+import { getDb, getCurrentProjectId } from '../db.js'
 
 // ── Row types ──────────────────────────────────────────────────────────────────
 
@@ -53,19 +53,12 @@ function rowToFieldMapping(r: FieldMappingRow) {
   }
 }
 
-function getProjectId(): string {
-  const db = getDb()
-  const row = db.prepare('SELECT id FROM projects LIMIT 1').get() as { id: string } | undefined
-  if (!row) throw new Error('No project is open.')
-  return row.id
-}
-
 // ── Service functions ─────────────────────────────────────────────────────────
 
 /** Create a new transformation. */
 export function createTransformation(name: string, description?: string) {
   const db = getDb()
-  const projectId = getProjectId()
+  const projectId = getCurrentProjectId()
 
   const dup = db.prepare('SELECT COUNT(*) as c FROM transformations WHERE project_id = ? AND name = ?').get(projectId, name) as { c: number }
   if (dup.c > 0) throw new Error(`A transformation named "${name}" already exists.`)
@@ -86,7 +79,7 @@ export function createTransformation(name: string, description?: string) {
 /** List all transformations for the current project. */
 export function listTransformations() {
   const db = getDb()
-  const projectId = getProjectId()
+  const projectId = getCurrentProjectId()
   const rows = db.prepare(
     'SELECT * FROM transformations WHERE project_id = ? ORDER BY created_at ASC'
   ).all(projectId) as TransformationRow[]
@@ -140,7 +133,7 @@ export function deleteTransformation(id: string) {
 /** Duplicate a transformation (new name, same canvas state and field mappings). */
 export function duplicateTransformation(id: string) {
   const db = getDb()
-  const projectId = getProjectId()
+  const projectId = getCurrentProjectId()
   const src = db.prepare('SELECT * FROM transformations WHERE id = ?').get(id) as TransformationRow | undefined
   if (!src) throw new Error(`Transformation ${id} not found.`)
 
