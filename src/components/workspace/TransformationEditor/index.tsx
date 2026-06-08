@@ -513,11 +513,12 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
   const handleAddJoin = useCallback(() => {
     const id = `join-${Date.now()}`
     const opCount = nodesRef.current.filter(n => n.type === 'joinOperator' || n.type === 'filterOperator').length
+    const joinCount = nodesRef.current.filter(n => n.type === 'joinOperator').length
     const newNode: Node = {
       id,
       type: 'joinOperator',
       position: { x: 240, y: 80 + opCount * 140 },
-      data: { joinType: 'left', joinKeyA: '', joinKeyB: '' },
+      data: { joinType: 'left', joinKeyA: '', joinKeyB: '', aliasB: `j${joinCount + 1}` },
     }
     setNodes(nds => {
       const updated = [...nds, newNode]

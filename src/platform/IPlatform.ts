@@ -160,21 +160,28 @@ export interface MappingLine {
   rawConfig: string
 }
 
-export interface JoinInfo {
+/** One JOIN step in a cascaded join chain. */
+export interface JoinStep {
   joinType: 'inner' | 'left' | 'right'
-  leftSource: string
-  leftRowCount: number | null
-  leftKey: string
   rightSource: string
   rightRowCount: number | null
+  leftKey: string
   rightKey: string
+  rightAlias?: string
+}
+
+/** Full join chain: a root source with zero or more successive JOINs. */
+export interface JoinChain {
+  rootSource: string
+  rootRowCount: number | null
+  steps: JoinStep[]
 }
 
 export interface QueryPath {
   mapNodeId: string | null
   sourceObject: string | null
   sourceRowCount: number | null
-  join?: JoinInfo
+  joinChain?: JoinChain
   filters: string[]
   mappings: MappingLine[]
 }

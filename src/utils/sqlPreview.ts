@@ -1,4 +1,4 @@
-import type { TransformationQuery, MappingLine } from '../platform/IPlatform.js'
+import type { TransformationQuery, MappingLine, JoinStep } from '../platform/IPlatform.js'
 
 // ── Rule → SQL expression ─────────────────────────────────────────────────────
 
@@ -114,6 +114,12 @@ function buildSelectBlock(mappings: MappingLine[]): string {
   }).join('\n')
 }
 
+function joinKeyword(step: JoinStep): string {
+  return step.joinType === 'inner' ? 'INNER JOIN'
+    : step.joinType === 'right' ? 'RIGHT JOIN'
+    : 'LEFT JOIN'
+}
+
 function buildPathBlock(path: TransformationQuery['paths'][number], pathLabel?: string): string {
   const lines: string[] = []
 
@@ -122,16 +128,17 @@ function buildPathBlock(path: TransformationQuery['paths'][number], pathLabel?: 
   lines.push('SELECT')
   lines.push(buildSelectBlock(path.mappings))
 
-  if (path.join) {
-    const j = path.join
-    const joinKeyword = j.joinType === 'inner' ? 'INNER JOIN'
-      : j.joinType === 'right' ? 'RIGHT JOIN'
-      : 'LEFT JOIN'
-    const leftNote = j.leftRowCount !== null ? `  -- ${j.leftRowCount.toLocaleString()} rows` : ''
-    const rightNote = j.rightRowCount !== null ? `  -- ${j.rightRowCount.toLocaleString()} rows` : ''
-    lines.push(`FROM ${j.leftSource}${leftNote}`)
-    lines.push(`${joinKeyword} ${j.rightSource}${rightNote}`)
-    lines.push(`    ON ${j.leftSource}.${j.leftKey} = ${j.rightSource}.${j.rightKey}`)
+  if (path.joinChain) {
+    const jc = path.joinChain
+    const rootNote = jc.rootRowCount !== null ? `  -- ${jc.rootRowCount.toLocaleString()} rows` : ''
+    lines.push(`FROM ${jc.rootSource}${rootNote}`)
+    for (const step of jc.steps) {
+      const alias = step.rightAlias ? ` AS ${step.rightAlias}` : ''
+      const ref = step.rightAlias ?? step.rightSource
+      const rowNote = step.rightRowCount !== null ? `  -- ${step.rightRowCount.toLocaleString()} rows` : ''
+      lines.push(`${joinKeyword(step)} ${step.rightSource}${alias}${rowNote}`)
+      lines.push(`    ON ${step.leftKey} = ${ref}.${step.rightKey}`)
+    }
   } else {
     const rowNote = path.sourceRowCount !== null
       ? `  -- ${path.sourceRowCount.toLocaleString()} rows`

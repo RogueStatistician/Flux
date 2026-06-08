@@ -6,6 +6,8 @@ export interface JoinNodeData extends Record<string, unknown> {
   joinType?: 'inner' | 'left' | 'right'
   joinKeyA?: string
   joinKeyB?: string
+  /** Short prefix applied to all B-side field names in the engine output (e.g. "j1"). */
+  aliasB?: string
   label?: string
   _renaming?: boolean
 }
@@ -87,6 +89,11 @@ function JoinOperatorNodeInner({ id, data, selected }: NodeProps) {
       )}
       {!d.joinKeyA && !d.joinKeyB && (
         <div style={{ padding: '5px 14px', fontSize: 9, color: '#9ca3af' }}>click to configure</div>
+      )}
+      {d.aliasB && (
+        <div style={{ padding: '2px 14px 6px', fontSize: 8, color: '#c2410c', fontFamily: 'monospace', opacity: 0.7 }}>
+          B → {d.aliasB}_*
+        </div>
       )}
 
       <Handle type="source" position={Position.Right} id="output"

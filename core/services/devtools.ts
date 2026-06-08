@@ -27,21 +27,26 @@ export interface MappingLine {
   rawConfig: string
 }
 
-export interface JoinInfo {
+export interface JoinStep {
   joinType: 'inner' | 'left' | 'right'
-  leftSource: string
-  leftRowCount: number | null
-  leftKey: string
   rightSource: string
   rightRowCount: number | null
+  leftKey: string
   rightKey: string
+  rightAlias?: string
+}
+
+export interface JoinChain {
+  rootSource: string
+  rootRowCount: number | null
+  steps: JoinStep[]
 }
 
 export interface QueryPath {
   mapNodeId: string | null
   sourceObject: string | null
   sourceRowCount: number | null
-  join?: JoinInfo
+  joinChain?: JoinChain
   filters: string[]
   mappings: MappingLine[]
 }
@@ -247,10 +252,10 @@ function findSourceIdByHandle(joinNodeId: string, handleId: string, canvas: Canv
 
 interface PathSource {
   sourceObjectId: string | null
-  join: JoinInfo | null
+  joinChain: JoinChain | null
 }
 
-/** Resolve the data source(s) for a map node, handling direct, join, and append paths. */
+/** Resolve the data source(s) for a map node, building a full join chain for cascaded joins. */
 function resolvePathSource(mapNodeId: string, canvas: Canvas): PathSource {
   const db = getDb()
 
@@ -265,9 +270,65 @@ function resolvePathSource(mapNodeId: string, canvas: Canvas): PathSource {
     return sep >= 0 ? encoded.slice(sep + 2) : encoded
   }
 
-  // Walk upstream; stop when we hit sourceObject or joinOperator
+  /**
+   * Recursively build a JoinChain from a node.
+   * Returns null when the node doesn't resolve to any known source.
+   */
+  function buildChain(nodeId: string, visited = new Set<string>()): JoinChain | null {
+    if (visited.has(nodeId)) return null
+    visited.add(nodeId)
+
+    const node = canvas.nodes.find(n => n.id === nodeId)
+    if (!node) return null
+
+    if (node.type === 'sourceObject') {
+      const objId = (node.data?.objectId as string) ?? null
+      if (!objId) return null
+      const obj = resolveObjectName(objId)
+      return { rootSource: obj.name, rootRowCount: obj.rowCount, steps: [] }
+    }
+
+    if (node.type === 'joinOperator') {
+      const edgeA = canvas.edges.find(e => e.target === nodeId && e.targetHandle === 'input-a')
+      const edgeB = canvas.edges.find(e => e.target === nodeId && e.targetHandle === 'input-b')
+      if (!edgeA || !edgeB) return null
+
+      const chainA = buildChain(edgeA.source, new Set(visited))
+      if (!chainA) return null
+
+      // For B side, find the leaf source name for display; it may itself be a join chain
+      const bLeafId = findAnySourceObjectId(edgeB.source, canvas)
+      const bObj = bLeafId ? resolveObjectName(bLeafId) : { name: edgeB.source, rowCount: null }
+
+      const rawKeyA = (node.data?.joinKeyA as string) ?? ''
+      const rawKeyB = (node.data?.joinKeyB as string) ?? ''
+      const rightAlias = (node.data?.aliasB as string) || undefined
+
+      chainA.steps.push({
+        joinType: (node.data?.joinType as 'inner' | 'left' | 'right') ?? 'left',
+        rightSource: bObj.name,
+        rightRowCount: bObj.rowCount,
+        leftKey: stripKey(rawKeyA),
+        rightKey: stripKey(rawKeyB),
+        rightAlias,
+      })
+
+      return chainA
+    }
+
+    // Pass through filter/dedup/append — walk upstream
+    for (const edge of canvas.edges) {
+      if (edge.target !== nodeId) continue
+      const chain = buildChain(edge.source, new Set(visited))
+      if (chain) return chain
+    }
+
+    return null
+  }
+
+  // Walk from mapNode to the first upstream sourceObject or joinOperator
   function walk(nodeId: string, visited = new Set<string>()): PathSource {
-    if (visited.has(nodeId)) return { sourceObjectId: null, join: null }
+    if (visited.has(nodeId)) return { sourceObjectId: null, joinChain: null }
     visited.add(nodeId)
 
     for (const edge of canvas.edges) {
@@ -276,39 +337,20 @@ function resolvePathSource(mapNodeId: string, canvas: Canvas): PathSource {
       if (!src) continue
 
       if (src.type === 'sourceObject') {
-        return { sourceObjectId: (src.data?.objectId as string) ?? null, join: null }
+        return { sourceObjectId: (src.data?.objectId as string) ?? null, joinChain: null }
       }
 
       if (src.type === 'joinOperator') {
-        const aId = findSourceIdByHandle(src.id, 'input-a', canvas)
-        const bId = findSourceIdByHandle(src.id, 'input-b', canvas)
-        if (!aId || !bId) return { sourceObjectId: aId ?? bId, join: null }
-
-        const aObj = resolveObjectName(aId)
-        const bObj = resolveObjectName(bId)
-        const rawKeyA = (src.data?.joinKeyA as string) ?? ''
-        const rawKeyB = (src.data?.joinKeyB as string) ?? ''
-
-        return {
-          sourceObjectId: aId,
-          join: {
-            joinType: (src.data?.joinType as 'inner' | 'left' | 'right') ?? 'left',
-            leftSource: aObj.name,
-            leftRowCount: aObj.rowCount,
-            leftKey: stripKey(rawKeyA),
-            rightSource: bObj.name,
-            rightRowCount: bObj.rowCount,
-            rightKey: stripKey(rawKeyB),
-          },
-        }
+        const chain = buildChain(src.id, new Set(visited))
+        const rootSourceId = findAnySourceObjectId(src.id, canvas)
+        return { sourceObjectId: rootSourceId, joinChain: chain }
       }
 
-      // Pass through filter/dedup/append — keep walking
       const result = walk(src.id, visited)
-      if (result.sourceObjectId || result.join) return result
+      if (result.sourceObjectId || result.joinChain) return result
     }
 
-    return { sourceObjectId: null, join: null }
+    return { sourceObjectId: null, joinChain: null }
   }
 
   return walk(mapNodeId)
@@ -409,17 +451,16 @@ export function renderTransformationQuery(transformationId: string): Transformat
           }
         }
 
-        const { sourceObjectId, join } = canvas
+        const { sourceObjectId, joinChain } = canvas
           ? resolvePathSource(mapNodeId, canvas)
-          : { sourceObjectId: null, join: null }
+          : { sourceObjectId: null, joinChain: null }
 
         let sourceObject: string | null = null
         let sourceRowCount: number | null = null
 
-        if (join) {
-          // For joins, use the left source as primary; join info has both sides
-          sourceObject = join.leftSource
-          sourceRowCount = join.leftRowCount
+        if (joinChain) {
+          sourceObject = joinChain.rootSource
+          sourceRowCount = joinChain.rootRowCount
         } else if (sourceObjectId) {
           const srcObj = db.prepare(
             'SELECT name, row_count FROM data_objects WHERE id = ?'
@@ -428,7 +469,7 @@ export function renderTransformationQuery(transformationId: string): Transformat
         }
 
         // If no canvas source found, try to infer from rule configs
-        if (!sourceObject && !join) {
+        if (!sourceObject && !joinChain) {
           const sourceRefTypes = new Set(['direct', 'concat', 'split', 'substring', 'dateformat', 'picklisttranslate', 'expression'])
           for (const fm of mappings) {
             if (sourceRefTypes.has(fm.rule_type)) {
@@ -459,7 +500,7 @@ export function renderTransformationQuery(transformationId: string): Transformat
           }
         })
 
-        paths.push({ mapNodeId, sourceObject, sourceRowCount, join: join ?? undefined, filters, mappings: mappingLines })
+        paths.push({ mapNodeId, sourceObject, sourceRowCount, joinChain: joinChain ?? undefined, filters, mappings: mappingLines })
       }
     } else {
       // Legacy: merge all mappings for this target

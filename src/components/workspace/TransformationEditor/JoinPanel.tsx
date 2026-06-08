@@ -41,6 +41,7 @@ export function JoinPanel({
   const [joinType, setJoinType] = useState<'inner' | 'left' | 'right'>(initialData.joinType ?? 'left')
   const [joinKeyA, setJoinKeyA] = useState(initialData.joinKeyA ?? '')
   const [joinKeyB, setJoinKeyB] = useState(initialData.joinKeyB ?? '')
+  const [aliasB, setAliasB] = useState(initialData.aliasB ?? '')
 
   const upstreamA = useMemo(() => findUpstreamByHandle(joinNodeId, 'input-a', nodes, edges), [joinNodeId, nodes, edges])
   const upstreamB = useMemo(() => findUpstreamByHandle(joinNodeId, 'input-b', nodes, edges), [joinNodeId, nodes, edges])
@@ -50,7 +51,7 @@ export function JoinPanel({
   const labelB = upstreamB.length === 1 ? (allObjects.find(o => o.id === upstreamB[0])?.name ?? 'Input B') : 'Input B'
 
   function handleSave() {
-    onSave({ joinType, joinKeyA, joinKeyB })
+    onSave({ joinType, joinKeyA, joinKeyB, aliasB: aliasB.trim() || undefined })
     onClose()
   }
 
@@ -142,6 +143,29 @@ export function JoinPanel({
             <p className="text-xs text-gray-400 mt-2">
               Rows are matched when the value of key A equals the value of key B.
             </p>
+          </div>
+
+          {/* B-side alias */}
+          <div>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">B-side alias</p>
+            <p className="text-xs text-gray-400 mb-2">
+              Fields from <span className="font-semibold text-orange-600">{labelB}</span> will be
+              available in mappings as <span className="font-mono text-orange-700">{aliasB || 'fieldname'}_*</span>.
+              Use a short prefix (e.g. <span className="font-mono">dept</span>, <span className="font-mono">j1</span>)
+              to avoid collisions when the same source is joined more than once.
+            </p>
+            <input
+              type="text"
+              value={aliasB}
+              onChange={e => setAliasB(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
+              placeholder="e.g. j1, dept, mgr"
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-orange-400 font-mono"
+            />
+            {aliasB && (
+              <p className="text-xs text-orange-600 mt-1 font-mono">
+                Example: {aliasB}_{(joinKeyB.includes('::') ? joinKeyB.split('::')[1] : joinKeyB) || 'fieldname'}
+              </p>
+            )}
           </div>
 
         </div>

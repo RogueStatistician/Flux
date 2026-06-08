@@ -481,6 +481,7 @@ interface JoinSpec {
   joinKeyB: string  // encoded as "objectId::fieldName"
   sourceAId: string
   sourceBId: string
+  aliasB?: string   // prefix applied to all B-side field names in merged output
 }
 
 /** Recursively finds the first sourceObject ID reachable upstream of nodeId. */
@@ -541,6 +542,7 @@ function findJoinSpec(targetObjectId: string, canvas: CanvasState): JoinSpec | n
           joinKeyB: (srcNode.data.joinKeyB as string) ?? '',
           sourceAId,
           sourceBId,
+          aliasB: (srcNode.data.aliasB as string) || undefined,
         }
       }
       const found = walk(srcNode.id)
@@ -585,6 +587,7 @@ function findJoinSpecFromNode(nodeId: string, canvas: CanvasState): JoinSpec | n
           joinKeyB: (srcNode.data.joinKeyB as string) ?? '',
           sourceAId,
           sourceBId,
+          aliasB: (srcNode.data.aliasB as string) || undefined,
         }
       }
       const found = walk(srcNode.id)
@@ -775,6 +778,9 @@ function decodeFieldName(encoded: string): string {
  * Perform an inner / left / right join of two row sets.
  * Merged rows have all fields from both A and B; A fields overwrite B on collision.
  * For right joins B fields take priority (A overwrites only where B is absent).
+ * If spec.aliasB is set, all B-side field names are prefixed with `aliasB_` in the
+ * output — this lets the same source be joined multiple times without collisions.
+ * Old projects without aliasB are unaffected (no prefix applied).
  */
 function executeJoin(
   rowsA: Record<string, string>[],
@@ -783,8 +789,17 @@ function executeJoin(
 ): Record<string, string>[] {
   const keyA = decodeFieldName(spec.joinKeyA)
   const keyB = decodeFieldName(spec.joinKeyB)
+  const aliasB = spec.aliasB?.trim() || undefined
 
-  // Index B rows by their join key value
+  // Prefix all B-side field names when an alias is configured
+  function prefixB(row: Record<string, string>): Record<string, string> {
+    if (!aliasB) return row
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(row)) out[`${aliasB}_${k}`] = v
+    return out
+  }
+
+  // Index B rows by their join key value (on original, un-prefixed names)
   const bIndex = new Map<string, Record<string, string>[]>()
   for (const row of rowsB) {
     const k = row[keyB] ?? ''
@@ -799,7 +814,7 @@ function executeJoin(
     for (const rowA of rowsA) {
       const matches = bIndex.get(rowA[keyA] ?? '') ?? (spec.joinType === 'left' ? [emptyB] : [])
       for (const rowB of matches) {
-        result.push({ ...rowB, ...rowA })  // A fields win on collision
+        result.push({ ...prefixB(rowB), ...rowA })  // A fields win on collision
       }
     }
   } else {
@@ -813,8 +828,9 @@ function executeJoin(
     const emptyA: Record<string, string> = {}
     for (const rowB of rowsB) {
       const matches = aIndex.get(rowB[keyB] ?? '') ?? [emptyA]
+      const pB = prefixB(rowB)
       for (const rowA of matches) {
-        result.push({ ...rowA, ...rowB })  // B fields win on collision
+        result.push({ ...rowA, ...pB })  // B fields win on collision
       }
     }
   }
@@ -852,6 +868,7 @@ function collectRowsFromNode(
         joinKeyB: (node.data.joinKeyB as string) ?? '',
         sourceAId: '',
         sourceBId: '',
+        aliasB: (node.data.aliasB as string) || undefined,
       })
     }
 
