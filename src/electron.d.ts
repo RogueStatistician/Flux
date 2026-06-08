@@ -129,6 +129,7 @@ interface ElectronAPI {
   listRuns(transformationId?: string): Promise<Run[]>
   getRunIssues(runId: string, severity?: IssueSeverity): Promise<RunIssue[]>
   saveOutput(runId: string, targetObjectId: string, destPath: string): Promise<void>
+  exportMappingAudit(transformationId: string, destPath: string): Promise<void>
   previewOutput(runId: string, targetObjectId: string, limit?: number): Promise<{ headers: string[]; rows: Record<string, string>[]; totalRows: number }>
   onRunProgress(callback: (data: RunProgressEvent) => void): () => void
 

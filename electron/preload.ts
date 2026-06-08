@@ -194,6 +194,9 @@ const electronAPI = {
   saveOutput: (runId: string, targetObjectId: string, destPath: string) =>
     ipcRenderer.invoke('export:saveOutput', runId, targetObjectId, destPath),
 
+  exportMappingAudit: (transformationId: string, destPath: string) =>
+    ipcRenderer.invoke('export:mappingAudit', transformationId, destPath),
+
   previewOutput: (runId: string, targetObjectId: string, limit?: number) =>
     ipcRenderer.invoke('run:previewOutput', runId, targetObjectId, limit),
 

@@ -74,6 +74,7 @@ export class ElectronPlatform implements IPlatform {
   listRuns(transformationId?: string) { return window.electronAPI.listRuns(transformationId) }
   getRunIssues(runId: string, severity?: Parameters<typeof window.electronAPI.getRunIssues>[1]) { return window.electronAPI.getRunIssues(runId, severity) }
   saveOutput(runId: string, targetObjectId: string, destPath: string) { return window.electronAPI.saveOutput(runId, targetObjectId, destPath) }
+  exportMappingAudit(transformationId: string, destPath: string) { return window.electronAPI.exportMappingAudit(transformationId, destPath) }
   previewOutput(runId: string, targetObjectId: string, limit?: number) { return window.electronAPI.previewOutput(runId, targetObjectId, limit) }
   onRunProgress(callback: (data: RunProgressEvent) => void) { return window.electronAPI.onRunProgress(callback) }
 

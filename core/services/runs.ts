@@ -159,6 +159,123 @@ export async function previewOutput(runId: string, targetObjectId: string, limit
   return { headers, rows, totalRows: dataRows.length }
 }
 
+/** Build and write a mapping-audit Excel file for a transformation.
+ *  Columns: Target Object, Target Field, Rule Type, Source Field, Source File.
+ *  For aliased join sources the real source object name is resolved from the canvas. */
+export async function exportMappingAudit(transformationId: string, destPath: string) {
+  const db = getDb()
+
+  const transRow = db.prepare('SELECT canvas_state FROM transformations WHERE id = ?').get(transformationId) as
+    | { canvas_state: string | null } | undefined
+  if (!transRow) throw new Error(`Transformation ${transformationId} not found.`)
+
+  type CanvasNode = { id: string; type: string; data: Record<string, unknown> }
+  type CanvasEdge = { source: string; target: string; sourceHandle?: string; targetHandle?: string }
+  const canvas = transRow.canvas_state
+    ? (JSON.parse(transRow.canvas_state) as { nodes: CanvasNode[]; edges: CanvasEdge[] })
+    : { nodes: [] as CanvasNode[], edges: [] as CanvasEdge[] }
+
+  const mappingRows = db.prepare(`
+    SELECT fm.rule_type, fm.rule_config,
+           of.name AS target_field_name,
+           do2.name AS target_object_name
+    FROM field_mappings fm
+    JOIN object_fields of   ON of.id  = fm.target_field_id
+    JOIN data_objects  do2  ON do2.id = fm.target_object_id
+    WHERE fm.transformation_id = ?
+    ORDER BY fm.target_object_id, fm.id ASC
+  `).all(transformationId) as Array<{
+    rule_type: string
+    rule_config: string
+    target_field_name: string
+    target_object_name: string
+  }>
+
+  function getObjectName(objectId: string): string {
+    const r = db.prepare('SELECT name FROM data_objects WHERE id = ?').get(objectId) as { name: string } | undefined
+    return r?.name ?? objectId
+  }
+
+  function resolveAlias(aliasPrefix: string): string {
+    const joinNode = canvas.nodes.find(n =>
+      n.type === 'joinOperator' && (n.data.aliasB as string | undefined) === aliasPrefix
+    )
+    if (!joinNode) return `(alias: ${aliasPrefix})`
+    const bEdge = canvas.edges.find(e => e.target === joinNode.id && e.targetHandle === 'input-b')
+    if (!bEdge) return `(alias: ${aliasPrefix})`
+    const srcNode = canvas.nodes.find(n => n.id === bEdge.source)
+    if (!srcNode) return `(alias: ${aliasPrefix})`
+    if (srcNode.type === 'sourceObject') {
+      const objId = srcNode.data.objectId as string | undefined
+      return objId ? getObjectName(objId) : `(alias: ${aliasPrefix})`
+    }
+    return `(alias: ${aliasPrefix})`
+  }
+
+  function resolveSource(sourceObjectId: string, sourceFieldName: string): { field: string; file: string } {
+    if (sourceObjectId.startsWith('_join_alias_')) {
+      const prefix = sourceObjectId.slice('_join_alias_'.length)
+      const field = sourceFieldName.startsWith(`${prefix}_`)
+        ? sourceFieldName.slice(prefix.length + 1)
+        : sourceFieldName
+      return { field, file: resolveAlias(prefix) }
+    }
+    return { field: sourceFieldName, file: getObjectName(sourceObjectId) }
+  }
+
+  const auditRows: [string, string, string, string, string][] = []
+  for (const m of mappingRows) {
+    let cfg: Record<string, unknown> = {}
+    try { cfg = JSON.parse(m.rule_config) as Record<string, unknown> } catch { /* ok */ }
+
+    let sourceField = ''
+    let sourceFile = ''
+
+    if (m.rule_type === 'direct' || m.rule_type === 'split' || m.rule_type === 'dateformat') {
+      const oid = cfg.sourceObjectId as string | undefined
+      const fname = cfg.sourceFieldName as string | undefined
+      if (oid && fname) { ({ field: sourceField, file: sourceFile } = resolveSource(oid, fname)) }
+    } else if (m.rule_type === 'constant') {
+      sourceField = `"${String(cfg.value ?? '')}"`
+    } else if (m.rule_type === 'uuid') {
+      sourceField = '(generated UUID)'
+    } else if (m.rule_type === 'incremental') {
+      sourceField = `(incremental, start=${cfg.start ?? 1}, step=${cfg.step ?? 1})`
+    } else if (m.rule_type === 'expression') {
+      sourceField = '(JS expression)'
+    } else if (m.rule_type === 'concat') {
+      sourceField = '(concat)'
+    } else if (m.rule_type === 'conditional') {
+      sourceField = '(conditional)'
+    } else {
+      sourceField = m.rule_type
+    }
+
+    auditRows.push([m.target_object_name, m.target_field_name, m.rule_type, sourceField, sourceFile])
+  }
+
+  const wb = new ExcelJS.Workbook()
+  const ws = wb.addWorksheet('Mapping Audit')
+
+  ws.columns = [
+    { header: 'Target Object', key: 'a', width: 30 },
+    { header: 'Target Field',  key: 'b', width: 30 },
+    { header: 'Rule Type',     key: 'c', width: 20 },
+    { header: 'Source Field',  key: 'd', width: 35 },
+    { header: 'Source File',   key: 'e', width: 35 },
+  ]
+
+  const hdr = ws.getRow(1)
+  hdr.eachCell(cell => {
+    cell.font = { bold: true }
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4F4' } }
+    cell.border = { bottom: { style: 'thin', color: { argb: 'FFCABFED' } } }
+  })
+
+  ws.addRows(auditRows)
+  await wb.xlsx.writeFile(destPath)
+}
+
 /** Copy an output file to a user-chosen destination path. */
 export function copyOutputFile(runId: string, targetObjectId: string, destPath: string) {
   const db = getDb()

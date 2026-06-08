@@ -400,6 +400,7 @@ export function RunsView() {
   const [progress, setProgress] = useState<RunProgressEvent | null>(null)
   const [detailRun, setDetailRun] = useState<Run | null>(null)
   const [showSqlPreview, setShowSqlPreview] = useState(false)
+  const [exportingAudit, setExportingAudit] = useState(false)
 
   const unsubRef = useRef<(() => void) | null>(null)
 
@@ -520,6 +521,32 @@ export function RunsView() {
               title="Preview transformation as SQL"
             >
               SQL
+            </button>
+
+            {/* Export mapping audit */}
+            <button
+              onClick={async () => {
+                if (!selectedTransId) return
+                const res = await platform.saveFile({
+                  title: 'Export mapping audit',
+                  defaultPath: `mapping-audit.xlsx`,
+                  filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+                })
+                if (res.canceled || !res.filePath) return
+                setExportingAudit(true)
+                try {
+                  await platform.exportMappingAudit(selectedTransId, res.filePath)
+                } catch (e) {
+                  alert(`Export failed: ${String(e)}`)
+                } finally {
+                  setExportingAudit(false)
+                }
+              }}
+              disabled={!selectedTransId || loading || exportingAudit}
+              className="px-3 py-2 border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40"
+              title="Export mapping audit to Excel"
+            >
+              {exportingAudit ? '…' : 'Mapping'}
             </button>
 
             {/* Run button */}

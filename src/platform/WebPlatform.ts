@@ -203,6 +203,12 @@ export class WebPlatform implements IPlatform {
     a.click()
   }
 
+  async exportMappingAudit(transformationId: string, _destPath: string): Promise<void> {
+    const a = document.createElement('a')
+    a.href = `${BASE}/export/mappingAudit/${encodeURIComponent(transformationId)}`
+    a.click()
+  }
+
   previewOutput(runId: string, targetObjectId: string, limit?: number):Promise<{ headers: string[]; rows: Record<string, string>[]; totalRows: number; }> {
     return api('/run/previewOutput', { runId, targetObjectId, limit })
   }
