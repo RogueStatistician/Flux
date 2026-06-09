@@ -854,7 +854,8 @@ export function MapPanel({
     if (rule.ruleType !== 'direct' || field.dataType !== 'picklist') return rule.config
     const { sourceObjectId, sourceFieldName } = rule.config as { sourceObjectId?: string; sourceFieldName?: string }
     if (!sourceObjectId || !sourceFieldName) return rule.config
-    const sourceField = fieldsMap[sourceObjectId]?.find(f => f.name === sourceFieldName)
+    // Use extendedFieldsMap so virtual alias groups (_join_alias_*) are resolved correctly.
+    const sourceField = extendedFieldsMap[sourceObjectId]?.find(f => f.name === sourceFieldName)
     if (!sourceField || sourceField.dataType !== 'picklist') return rule.config
     const mapping = picklistMappings.find(
       m => m.sourcePicklistId === sourceField.picklistId && m.targetPicklistId === field.picklistId
@@ -1026,7 +1027,7 @@ export function MapPanel({
                           targetField={field}
                           sourceObjectId={(rule.config as Record<string, unknown>).sourceObjectId as string | undefined}
                           sourceFieldName={(rule.config as Record<string, unknown>).sourceFieldName as string | undefined}
-                          fieldsMap={fieldsMap}
+                          fieldsMap={extendedFieldsMap}
                           picklists={picklists}
                           picklistMappings={picklistMappings}
                         />
