@@ -9,7 +9,7 @@ import { useState, useMemo } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import type { DataObject, ObjectField } from '../../../types/index.js'
 import type { JoinNodeData } from './nodes/JoinOperatorNode.js'
-import { findUpstreamByHandle, SourceFieldPicker } from './shared.js'
+import { findUpstreamByHandle, collectJoinAliasGroups, SourceFieldPicker } from './shared.js'
 
 const JOIN_TYPES: Array<{ value: 'inner' | 'left' | 'right'; label: string; desc: string }> = [
   { value: 'inner', label: 'Inner', desc: 'Only rows with matches on both sides' },
@@ -45,6 +45,45 @@ export function JoinPanel({
 
   const upstreamA = useMemo(() => findUpstreamByHandle(joinNodeId, 'input-a', nodes, edges), [joinNodeId, nodes, edges])
   const upstreamB = useMemo(() => findUpstreamByHandle(joinNodeId, 'input-b', nodes, edges), [joinNodeId, nodes, edges])
+
+  // Collect alias groups from the A-side upstream graph so chained aliased joins
+  // are surfaced as virtual prefixed groups (e.g. "t1 · TabB") in the key picker.
+  const joinAliasGroupsA = useMemo(() => {
+    const aEdge = edges.find(e => e.target === joinNodeId && e.targetHandle === 'input-a')
+    if (!aEdge) return []
+    return collectJoinAliasGroups(aEdge.source, nodes, edges)
+  }, [joinNodeId, nodes, edges])
+
+  const extendedFieldsMapA = useMemo(() => {
+    if (joinAliasGroupsA.length === 0) return fieldsMap
+    const map: Record<string, ObjectField[]> = { ...fieldsMap }
+    for (const group of joinAliasGroupsA) {
+      const virtualFields: ObjectField[] = []
+      for (const bId of group.bSourceIds) {
+        for (const f of (fieldsMap[bId] ?? [])) {
+          const prefixedName = `${group.aliasPrefix}_${f.name}`
+          virtualFields.push({ ...f, id: `${group.virtualId}::${prefixedName}`, name: prefixedName })
+        }
+      }
+      map[group.virtualId] = virtualFields
+    }
+    return map
+  }, [fieldsMap, joinAliasGroupsA])
+
+  // B-side sources that are aliased should not appear as raw groups in the A picker.
+  const extendedUpstreamA = useMemo(() => {
+    const aliasedBIds = new Set(joinAliasGroupsA.flatMap(g => g.bSourceIds))
+    return [...upstreamA.filter(id => !aliasedBIds.has(id)), ...joinAliasGroupsA.map(g => g.virtualId)]
+  }, [upstreamA, joinAliasGroupsA])
+
+  const groupLabelsA = useMemo(() => {
+    const labels: Record<string, string> = {}
+    for (const group of joinAliasGroupsA) {
+      const bNames = group.bSourceIds.map(id => allObjects.find(o => o.id === id)?.name ?? id).join(', ')
+      labels[group.virtualId] = `${group.aliasPrefix} · ${bNames}`
+    }
+    return labels
+  }, [joinAliasGroupsA, allObjects])
 
   // Label A / B with source object name if only one source feeds that side
   const labelA = upstreamA.length === 1 ? (allObjects.find(o => o.id === upstreamA[0])?.name ?? 'Input A') : 'Input A'
@@ -118,8 +157,9 @@ export function JoinPanel({
                 <SourceFieldPicker
                   value={joinKeyA}
                   sourceObjects={allObjects}
-                  fieldsMap={fieldsMap}
-                  upstreamSourceIds={upstreamA}
+                  fieldsMap={extendedFieldsMapA}
+                  upstreamSourceIds={extendedUpstreamA}
+                  sourceGroupLabels={groupLabelsA}
                   onChange={setJoinKeyA}
                   placeholder="— pick key field —"
                   className="flex-1"
