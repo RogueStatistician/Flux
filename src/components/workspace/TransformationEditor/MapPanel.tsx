@@ -832,6 +832,7 @@ export function MapPanel({
   // Picklist data for mapping hints
   const [picklists, setPicklists] = useState<Picklist[]>([])
   const [picklistMappings, setPicklistMappings] = useState<PicklistMapping[]>([])
+  const [picklistMappingsLoaded, setPicklistMappingsLoaded] = useState(false)
 
   useEffect(() => {
     Promise.all([
@@ -840,6 +841,7 @@ export function MapPanel({
     ]).then(([pls, plms]) => {
       setPicklists(pls)
       setPicklistMappings(plms)
+      setPicklistMappingsLoaded(true)
     }).catch(() => {})
   }, [])
 
@@ -861,7 +863,9 @@ export function MapPanel({
       m => m.sourcePicklistId === sourceField.picklistId && m.targetPicklistId === field.picklistId
     )
     if (mapping) return { ...rule.config, picklistMappingId: mapping.id }
-    // Remove stale picklistMappingId if no mapping found
+    // Only strip stale picklistMappingId once mappings are confirmed loaded.
+    // If not loaded yet (race condition on fast save), preserve the existing ID.
+    if (!picklistMappingsLoaded) return rule.config
     const { picklistMappingId: _, ...rest } = rule.config as Record<string, unknown>
     return rest
   }
