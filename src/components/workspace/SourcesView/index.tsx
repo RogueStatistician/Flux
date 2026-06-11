@@ -14,6 +14,7 @@ export function SourcesView() {
   // objectId → null (no file) | true (file ok) | false (file missing)
   const [fileStatus, setFileStatus] = useState<Record<string, boolean | null>>({})
   const [relinking, setRelinking] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
 
   const load = useCallback(() => {
     platform.listObjects('source').then(objs => {
@@ -78,19 +79,31 @@ export function SourcesView() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Top bar */}
-      <div className="px-6 py-4 border-b bg-white shrink-0 flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold text-gray-800">Sources</p>
-          <p className="text-xs text-gray-400 mt-0.5">
-            Excel / CSV exports from your source system
-          </p>
+      <div className="px-6 pt-4 pb-3 border-b bg-white shrink-0">
+        <div className="flex items-center justify-between mb-2.5">
+          <div>
+            <p className="text-sm font-semibold text-gray-800">Sources</p>
+            <p className="text-xs text-gray-400 mt-0.5">Excel / CSV exports from your source system</p>
+          </div>
+          <button
+            onClick={handleUpload}
+            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            ↑ Upload file
+          </button>
         </div>
-        <button
-          onClick={handleUpload}
-          className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          ↑ Upload file
-        </button>
+        <div className="relative">
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search sources…"
+            className="w-full pl-7 pr-6 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+          />
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300 text-xs select-none">⌕</span>
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>
+          )}
+        </div>
       </div>
 
       {/* Content */}
@@ -101,7 +114,10 @@ export function SourcesView() {
           <EmptyState onUpload={handleUpload} />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {objects.map(obj => {
+            {objects.filter(o => !search || o.name.toLowerCase().includes(search.toLowerCase())).length === 0 ? (
+              <div className="col-span-3 text-center text-gray-400 text-sm mt-16">No sources match "{search}"</div>
+            ) : null}
+            {objects.filter(o => !search || o.name.toLowerCase().includes(search.toLowerCase())).map(obj => {
               const fileMissing = fileStatus[obj.id] === false
               return (
                 <div key={obj.id} className="relative">
