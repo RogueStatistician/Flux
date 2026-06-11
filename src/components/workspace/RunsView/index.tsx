@@ -401,6 +401,7 @@ export function RunsView() {
   const [detailRun, setDetailRun] = useState<Run | null>(null)
   const [showSqlPreview, setShowSqlPreview] = useState(false)
   const [exportingAudit, setExportingAudit] = useState(false)
+  const [validationError, setValidationError] = useState<string | null>(null)
 
   const unsubRef = useRef<(() => void) | null>(null)
 
@@ -414,6 +415,9 @@ export function RunsView() {
       })
       .catch(() => setLoading(false))
   }, [])
+
+  // Clear validation error when the user switches transformation
+  useEffect(() => { setValidationError(null) }, [selectedTransId])
 
   // Load runs whenever selected transformation changes
   const loadRuns = useCallback(() => {
@@ -439,6 +443,31 @@ export function RunsView() {
 
   const handleRun = async () => {
     if (!selectedTransId) return
+
+    // Pre-flight: check for join nodes with missing key configuration
+    try {
+      const trans = await platform.getTransformation(selectedTransId)
+      if (trans.canvasState) {
+        const canvas = JSON.parse(trans.canvasState) as {
+          nodes: Array<{ id: string; type?: string; data: Record<string, unknown> }>
+        }
+        const badJoins = (canvas.nodes ?? [])
+          .filter(n => n.type === 'joinOperator' && (!n.data.joinKeyA || !n.data.joinKeyB))
+          .map(n => (n.data.label as string | undefined)?.trim() || n.id)
+        if (badJoins.length > 0) {
+          setValidationError(
+            `Cannot run: ${badJoins.length === 1 ? 'a Join node is' : 'some Join nodes are'} missing key configuration and would produce a cartesian product.\n` +
+            `Open the Join panel${badJoins.length > 1 ? 's' : ''} and set both key fields:\n` +
+            badJoins.map(l => `• ${l}`).join('\n')
+          )
+          return
+        }
+      }
+    } catch {
+      // If we can't load the canvas (e.g. no canvas yet) just let the run proceed — the engine will catch it
+    }
+
+    setValidationError(null)
     setRunning(true)
     setProgress({ runId: '', status: 'running', phase: 'loading' })
 
@@ -565,6 +594,22 @@ export function RunsView() {
           </div>
         </div>
       </div>
+
+      {/* Validation error banner */}
+      {validationError && (
+        <div className="px-6 py-3 bg-red-50 border-b border-red-200 flex items-start gap-3 shrink-0">
+          <span className="text-red-500 mt-0.5 shrink-0">⚠</span>
+          <div className="flex-1 min-w-0">
+            {validationError.split('\n').map((line, i) => (
+              <p key={i} className={`text-sm ${i === 0 ? 'font-medium text-red-700' : 'text-red-600 mt-0.5'}`}>{line}</p>
+            ))}
+          </div>
+          <button
+            onClick={() => setValidationError(null)}
+            className="text-red-400 hover:text-red-600 shrink-0 text-sm leading-none mt-0.5"
+          >✕</button>
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">

@@ -789,6 +789,15 @@ function executeJoin(
 ): Record<string, string>[] {
   const keyA = decodeFieldName(spec.joinKeyA)
   const keyB = decodeFieldName(spec.joinKeyB)
+
+  if (!keyA || !keyB) {
+    const label = spec.joinNodeId ? ` (node ${spec.joinNodeId})` : ''
+    throw new Error(
+      `Join${label} is missing key configuration — both sides must have a join key set. ` +
+      `Open the Join panel to configure the key fields before running.`
+    )
+  }
+
   const aliasB = spec.aliasB?.trim() || undefined
 
   // Prefix all B-side field names when an alias is configured
@@ -960,6 +969,25 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
   ).get(transformationId) as { canvas_state: string | null } | undefined
   if (canvasRow?.canvas_state) {
     try { canvas = JSON.parse(canvasRow.canvas_state) as CanvasState } catch { /* ignore */ }
+  }
+
+  // ── Pre-run canvas validation ─────────────────────────────────────────────────
+  // Reject early if any join node is missing key configuration — otherwise the
+  // engine would silently produce a cartesian product (|A| × |B| rows).
+
+  if (canvas) {
+    const badJoins = canvas.nodes
+      .filter(n => n.type === 'joinOperator')
+      .filter(n => !n.data.joinKeyA || !n.data.joinKeyB)
+      .map(n => (n.data.label as string | undefined)?.trim() || n.id)
+
+    if (badJoins.length > 0) {
+      throw new Error(
+        `Cannot run: the following Join node(s) have no key configured and would produce a ` +
+        `cartesian product — please open each Join panel and set both key fields before running.\n` +
+        badJoins.map(l => `  • ${l}`).join('\n')
+      )
+    }
   }
 
   // ── Load field mappings ──────────────────────────────────────────────────────
