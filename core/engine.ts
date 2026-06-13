@@ -432,17 +432,12 @@ function findFilterConditions(
  * Find filter conditions on the path from a joinOperator node to the target —
  * i.e. post-join filters applied to the merged row set.
  */
-function findPostJoinFilters(
+function findPostJoinFiltersFromNode(
   joinNodeId: string,
-  targetObjectId: string,
+  startNodeId: string,
   canvas: CanvasState,
 ): FilterCondition[] {
   const { nodes, edges } = canvas
-  const targetNode = nodes.find(
-    n => n.type === 'targetObject' && n.data.objectId === targetObjectId
-  )
-  if (!targetNode) return []
-
   const collected: FilterCondition[] = []
 
   function walk(nodeId: string): boolean {
@@ -468,8 +463,20 @@ function findPostJoinFilters(
     return false
   }
 
-  walk(targetNode.id)
+  walk(startNodeId)
   return collected
+}
+
+function findPostJoinFilters(
+  joinNodeId: string,
+  targetObjectId: string,
+  canvas: CanvasState,
+): FilterCondition[] {
+  const targetNode = canvas.nodes.find(
+    n => n.type === 'targetObject' && n.data.objectId === targetObjectId
+  )
+  if (!targetNode) return []
+  return findPostJoinFiltersFromNode(joinNodeId, targetNode.id, canvas)
 }
 
 // ── Join execution ────────────────────────────────────────────────────────────
@@ -747,7 +754,7 @@ function collectSourceRowsForMapNode(
     const rowsA = edgeA ? collectRowsFromNode(edgeA.source, canvas, sourceCache) : []
     const rowsB = edgeB ? collectRowsFromNode(edgeB.source, canvas, sourceCache) : []
     const joined = executeJoin(rowsA, rowsB, joinSpec)
-    const postFilters = findPostJoinFilters(joinSpec.joinNodeId, mapNodeId, canvas)
+    const postFilters = findPostJoinFiltersFromNode(joinSpec.joinNodeId, mapNodeId, canvas)
     return { sourceRows: joined, filterConditions: postFilters, primarySourceObjectId: joinSpec.sourceAId }
   }
 
