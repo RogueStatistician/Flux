@@ -874,7 +874,13 @@ function collectRowsFromNode(
     case 'joinOperator': {
       const edgeA = canvas.edges.find(e => e.target === nodeId && e.targetHandle === 'input-a')
       const edgeB = canvas.edges.find(e => e.target === nodeId && e.targetHandle === 'input-b')
-      if (!edgeA || !edgeB) return []
+      if (!edgeA || !edgeB) {
+        const label = (node.data.label as string | undefined)?.trim() || nodeId
+        throw new Error(
+          `Join node "${label}" is missing one or both input connections. ` +
+          `Make sure both the left (A) and right (B) input handles have edges wired to them.`
+        )
+      }
       const rowsA = collectRowsFromNode(edgeA.source, canvas, sourceCache)
       const rowsB = collectRowsFromNode(edgeB.source, canvas, sourceCache)
       return executeJoin(rowsA, rowsB, {
