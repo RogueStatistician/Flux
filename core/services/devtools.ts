@@ -296,9 +296,32 @@ function resolvePathSource(mapNodeId: string, canvas: Canvas): PathSource {
       const chainA = buildChain(edgeA.source, new Set(visited))
       if (!chainA) return null
 
-      // For B side, find the leaf source name for display; it may itself be a join chain
-      const bLeafId = findAnySourceObjectId(edgeB.source, canvas)
-      const bObj = bLeafId ? resolveObjectName(bLeafId) : { name: edgeB.source, rowCount: null }
+      // Recursively build the B-side — it may itself be a join chain (nested join)
+      const chainB = buildChain(edgeB.source, new Set(visited))
+
+      let rightSource: string
+      let rightRowCount: number | null = null
+
+      if (chainB && chainB.steps.length > 0) {
+        // B-side is a nested join — render it as an inline subquery string
+        const parts: string[] = [chainB.rootSource]
+        for (const s of chainB.steps) {
+          const kw = s.joinType === 'inner' ? 'INNER JOIN' : s.joinType === 'right' ? 'RIGHT JOIN' : 'LEFT JOIN'
+          const alias = s.rightAlias ? ` ${s.rightAlias}` : ''
+          const ref = s.rightAlias ?? s.rightSource
+          parts.push(`${kw} ${s.rightSource}${alias} ON ${s.leftKey} = ${ref}.${s.rightKey}`)
+        }
+        rightSource = `(${parts.join(' ')})`
+      } else if (chainB) {
+        rightSource = chainB.rootSource
+        rightRowCount = chainB.rootRowCount
+      } else {
+        // Fallback: find any reachable leaf source
+        const bLeafId = findAnySourceObjectId(edgeB.source, canvas)
+        const bObj = bLeafId ? resolveObjectName(bLeafId) : { name: edgeB.source, rowCount: null }
+        rightSource = bObj.name
+        rightRowCount = bObj.rowCount
+      }
 
       const rawKeyA = (node.data?.joinKeyA as string) ?? ''
       const rawKeyB = (node.data?.joinKeyB as string) ?? ''
@@ -306,8 +329,8 @@ function resolvePathSource(mapNodeId: string, canvas: Canvas): PathSource {
 
       chainA.steps.push({
         joinType: (node.data?.joinType as 'inner' | 'left' | 'right') ?? 'left',
-        rightSource: bObj.name,
-        rightRowCount: bObj.rowCount,
+        rightSource,
+        rightRowCount,
         leftKey: stripKey(rawKeyA),
         rightKey: stripKey(rawKeyB),
         rightAlias,
