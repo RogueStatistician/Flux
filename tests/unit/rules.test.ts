@@ -92,6 +92,12 @@ describe('applySplit', () => {
   it('uses the specified delimiter', () => {
     expect(applySplit({ sourceFieldName: 'val', delimiter: ',', index: 2 }, { val: 'a,b,c' })).toBe('c')
   })
+  it('splits on + and returns second part', () => {
+    expect(applySplit({ sourceFieldName: 'val', delimiter: '+', index: 1 }, { val: '+39123456789' })).toBe('39123456789')
+  })
+  it('treats empty string delimiter as default space', () => {
+    expect(applySplit({ sourceFieldName: 'val', delimiter: '', index: 0 }, { val: 'hello world' })).toBe('hello')
+  })
   it('returns empty string when index is out of range', () => {
     expect(applySplit({ sourceFieldName: 'val', index: 5 }, { val: 'a b' })).toBe('')
   })

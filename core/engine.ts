@@ -207,7 +207,7 @@ export function applySplit(
   row: Record<string, string>,
 ): string {
   const val = row[cfg.sourceFieldName] ?? ''
-  const parts = val.split(cfg.delimiter ?? ' ')
+  const parts = val.split(cfg.delimiter || ' ')
   return parts[cfg.index ?? 0] ?? ''
 }
 

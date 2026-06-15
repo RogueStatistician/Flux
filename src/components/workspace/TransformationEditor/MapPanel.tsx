@@ -266,9 +266,9 @@ function SplitEditor({
       />
       <span className="text-sm text-gray-400 shrink-0">split by</span>
       <input
-        value={(config.delimiter as string) ?? ' '}
+        value={(config.delimiter as string) ?? ''}
         onChange={e => onChange({ ...config, delimiter: e.target.value })}
-        placeholder="delim"
+        placeholder=" (space)"
         className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-violet-400"
       />
       <span className="text-sm text-gray-400 shrink-0">take part</span>
