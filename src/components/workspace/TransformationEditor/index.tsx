@@ -254,6 +254,8 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
   const [dedupPanel, setDedupPanel] = useState<{ dedupNodeId: string } | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ nodeId: string; nodeType: string; x: number; y: number } | null>(null)
   const [canvasError, setCanvasError] = useState<string | null>(null)
+  const [srcSearch, setSrcSearch] = useState('')
+  const [tgtSearch, setTgtSearch] = useState('')
 
   const [nodes, setNodes] = useNodesState<Node>([])
   const [edges, setEdges] = useEdgesState<Edge>([])
@@ -787,20 +789,31 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
           {/* Sources */}
           <div>
             <p className="text-xs font-bold text-blue-700 uppercase tracking-wide mb-2">Sources</p>
+            {sourceObjects.length > 0 && (
+              <input
+                type="search"
+                placeholder="Search…"
+                value={srcSearch}
+                onChange={e => setSrcSearch(e.target.value)}
+                className="w-full mb-2 px-2 py-1 text-xs border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            )}
             {sourceObjects.length === 0 ? (
               <p className="text-xs text-gray-300 italic">No source objects</p>
             ) : (
-              sourceObjects.map(obj => (
-                <DockItem
-                  key={obj.id}
-                  label={obj.name}
-                  sub={obj.systemName}
-                  columnCount={fieldsMap[obj.id]?.length}
-                  role="source"
-                  onCanvas={canvasNodeIds.has(`src-${obj.id}`)}
-                  onClick={() => handleDockSource(obj)}
-                />
-              ))
+              sourceObjects
+                .filter(obj => !srcSearch || obj.name.toLowerCase().includes(srcSearch.toLowerCase()))
+                .map(obj => (
+                  <DockItem
+                    key={obj.id}
+                    label={obj.name}
+                    sub={obj.systemName}
+                    columnCount={fieldsMap[obj.id]?.length}
+                    role="source"
+                    onCanvas={canvasNodeIds.has(`src-${obj.id}`)}
+                    onClick={() => handleDockSource(obj)}
+                  />
+                ))
             )}
           </div>
 
@@ -978,33 +991,44 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
         {/* Right dock — Targets */}
         <div className="w-44 shrink-0 overflow-y-auto border-l border-gray-100 bg-gray-50 p-3">
           <p className="text-xs font-bold text-emerald-700 uppercase tracking-wide mb-2">Targets</p>
+          {targetObjects.length > 0 && (
+            <input
+              type="search"
+              placeholder="Search…"
+              value={tgtSearch}
+              onChange={e => setTgtSearch(e.target.value)}
+              className="w-full mb-2 px-2 py-1 text-xs border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400"
+            />
+          )}
           {targetObjects.length === 0 ? (
             <p className="text-xs text-gray-300 italic">No target objects</p>
           ) : (
-            targetObjects.map(obj => {
-              const isOnCanvas = canvasNodeIds.has(`tgt-${obj.id}`)
-              return (
-                <div key={obj.id}>
-                  <DockItem
-                    label={obj.name}
-                    sub={obj.systemName}
-                    columnCount={fieldsMap[obj.id]?.length}
-                    role="target"
-                    onCanvas={isOnCanvas}
-                    onClick={() => handleDockTarget(obj)}
-                  />
-                  {isOnCanvas && (
-                    <button
-                      onClick={() => handleAddMapForTarget(obj)}
-                      title="Add another Map node for this target (different-structure source)"
-                      className="w-full text-center py-0.5 -mt-0.5 mb-1.5 text-xs text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 rounded transition-colors"
-                    >
-                      + add mapping
-                    </button>
-                  )}
-                </div>
-              )
-            })
+            targetObjects
+              .filter(obj => !tgtSearch || obj.name.toLowerCase().includes(tgtSearch.toLowerCase()))
+              .map(obj => {
+                const isOnCanvas = canvasNodeIds.has(`tgt-${obj.id}`)
+                return (
+                  <div key={obj.id}>
+                    <DockItem
+                      label={obj.name}
+                      sub={obj.systemName}
+                      columnCount={fieldsMap[obj.id]?.length}
+                      role="target"
+                      onCanvas={isOnCanvas}
+                      onClick={() => handleDockTarget(obj)}
+                    />
+                    {isOnCanvas && (
+                      <button
+                        onClick={() => handleAddMapForTarget(obj)}
+                        title="Add another Map node for this target (different-structure source)"
+                        className="w-full text-center py-0.5 -mt-0.5 mb-1.5 text-xs text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 rounded transition-colors"
+                      >
+                        + add mapping
+                      </button>
+                    )}
+                  </div>
+                )
+              })
           )}
           <p className="text-xs text-gray-300 mt-3 leading-relaxed">
             Adding a target also places a Map node on the canvas.

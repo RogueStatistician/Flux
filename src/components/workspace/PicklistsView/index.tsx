@@ -127,6 +127,7 @@ function PicklistColumn({
   const [creating, setCreating] = useState(false)
   const [bulkImporting, setBulkImporting] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [search, setSearch] = useState('')
 
   const isSource = side === 'source'
   const accent = isSource ? 'blue' : 'emerald'
@@ -212,6 +213,22 @@ function PicklistColumn({
         </div>
       </div>
 
+      {/* Search */}
+      <div className="px-4 py-2 border-b bg-white shrink-0">
+        <div className="relative">
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder={`Search ${side} picklists…`}
+            className={`w-full pl-7 pr-6 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 ${isSource ? 'focus:ring-blue-400' : 'focus:ring-emerald-400'} bg-white`}
+          />
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300 text-xs select-none">⌕</span>
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>
+          )}
+        </div>
+      </div>
+
       {/* New picklist form */}
       {showForm && (
         <div className="px-5 py-3 border-b bg-white">
@@ -250,15 +267,20 @@ function PicklistColumn({
             <p className="text-xs text-gray-200 mt-1">Click "+ New" to create one</p>
           </div>
         ) : (
-          picklists.map(pl => (
-            <PicklistCard
-              key={pl.id}
-              picklist={pl}
-              valueCount={valueCounts[pl.id] ?? 0}
-              onClick={() => onSelect(pl)}
-              onDelete={() => onDeleted(pl.id)}
-            />
-          ))
+          <>
+            {picklists.filter(pl => !search || pl.name.toLowerCase().includes(search.toLowerCase()) || pl.description?.toLowerCase().includes(search.toLowerCase())).length === 0 && (
+              <p className="text-xs text-gray-400 text-center mt-8">No picklists match "{search}"</p>
+            )}
+            {picklists.filter(pl => !search || pl.name.toLowerCase().includes(search.toLowerCase()) || pl.description?.toLowerCase().includes(search.toLowerCase())).map(pl => (
+              <PicklistCard
+                key={pl.id}
+                picklist={pl}
+                valueCount={valueCounts[pl.id] ?? 0}
+                onClick={() => onSelect(pl)}
+                onDelete={() => onDeleted(pl.id)}
+              />
+            ))}
+          </>
         )}
       </div>
     </div>

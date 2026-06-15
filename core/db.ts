@@ -308,6 +308,7 @@ ALTER TABLE data_objects ADD COLUMN source_skip_columns   INTEGER DEFAULT 0;
 ALTER TABLE data_objects ADD COLUMN source_data_start_row INTEGER DEFAULT NULL;
 `
 
+
 // ── Migrations ────────────────────────────────────────────────────────────────
 
 function applyMigrations(db: Database.Database): void {

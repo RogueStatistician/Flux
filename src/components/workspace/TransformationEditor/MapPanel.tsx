@@ -828,6 +828,7 @@ export function MapPanel({
 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [fieldSearch, setFieldSearch] = useState('')
 
   // Picklist data for mapping hints
   const [picklists, setPicklists] = useState<Picklist[]>([])
@@ -961,7 +962,16 @@ export function MapPanel({
 
         {/* Column headers */}
         <div className="grid border-b bg-gray-50 shrink-0" style={{ gridTemplateColumns: '220px 160px 1fr' }}>
-          <div className="px-5 py-2.5 text-xs font-bold text-gray-400 uppercase tracking-wider">Target field</div>
+          <div className="px-5 py-2.5 flex items-center gap-2">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider shrink-0">Target field</span>
+            <input
+              type="search"
+              placeholder="Filter…"
+              value={fieldSearch}
+              onChange={e => setFieldSearch(e.target.value)}
+              className="min-w-0 flex-1 px-2 py-0.5 text-xs border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-violet-400"
+            />
+          </div>
           <div className="px-3 py-2.5 text-xs font-bold text-gray-400 uppercase tracking-wider">Rule type</div>
           <div className="px-4 py-2.5 text-xs font-bold text-gray-400 uppercase tracking-wider">Transformation logic</div>
         </div>
@@ -980,7 +990,9 @@ export function MapPanel({
               <p className="text-sm">Define fields on the target object first.</p>
             </div>
           ) : (
-            targetFields.map(field => {
+            targetFields
+              .filter(field => !fieldSearch || field.name.toLowerCase().includes(fieldSearch.toLowerCase()))
+              .map(field => {
               const rule = rules[field.id] ?? { ruleType: '', config: {} }
               const isMapped = rule.ruleType !== ''
               const brokenRefs = rule.ruleType

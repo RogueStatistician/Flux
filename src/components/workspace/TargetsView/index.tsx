@@ -13,6 +13,7 @@ export function TargetsView() {
   const [wizardFilePath, setWizardFilePath] = useState<string | null>(null)
   const [showWizard, setShowWizard] = useState(false)
   const [selectedObject, setSelectedObject] = useState<DataObject | null>(null)
+  const [search, setSearch] = useState('')
 
   const load = useCallback(() => {
     platform.listObjects('target').then(setObjects).finally(() => setLoading(false))
@@ -50,26 +51,38 @@ export function TargetsView() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Top bar */}
-      <div className="px-6 py-4 border-b bg-white shrink-0 flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold text-gray-800">Targets</p>
-          <p className="text-xs text-gray-400 mt-0.5">
-            Target templates — schema that defines your output format
-          </p>
+      <div className="px-6 pt-4 pb-3 border-b bg-white shrink-0">
+        <div className="flex items-center justify-between mb-2.5">
+          <div>
+            <p className="text-sm font-semibold text-gray-800">Targets</p>
+            <p className="text-xs text-gray-400 mt-0.5">Target templates — schema that defines your output format</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => openWizard('upload')}
+              className="px-4 py-2 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 transition-colors"
+            >
+              ↓ Upload template
+            </button>
+            <button
+              onClick={() => openWizard('manual')}
+              className="px-4 py-2 border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              + Define manually
+            </button>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => openWizard('upload')}
-            className="px-4 py-2 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 transition-colors"
-          >
-            ↓ Upload template
-          </button>
-          <button
-            onClick={() => openWizard('manual')}
-            className="px-4 py-2 border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            + Define manually
-          </button>
+        <div className="relative">
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search targets…"
+            className="w-full pl-7 pr-6 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white"
+          />
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300 text-xs select-none">⌕</span>
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>
+          )}
         </div>
       </div>
 
@@ -81,7 +94,10 @@ export function TargetsView() {
           <EmptyState onUpload={() => openWizard('upload')} onManual={() => openWizard('manual')} />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {objects.map(obj => (
+            {objects.filter(o => !search || o.name.toLowerCase().includes(search.toLowerCase())).length === 0 ? (
+              <div className="col-span-3 text-center text-gray-400 text-sm mt-16">No targets match "{search}"</div>
+            ) : null}
+            {objects.filter(o => !search || o.name.toLowerCase().includes(search.toLowerCase())).map(obj => (
               <ObjectCard
                 key={obj.id}
                 object={obj}

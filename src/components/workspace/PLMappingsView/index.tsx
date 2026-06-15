@@ -126,6 +126,7 @@ export function PLMappingsView() {
   const [bulkResult, setBulkResult] = useState<BulkMappingResult | null>(null)
   const [bulkImporting, setBulkImporting] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [search, setSearch] = useState('')
 
   const load = useCallback(async () => {
     const [all, pls] = await Promise.all([
@@ -207,7 +208,8 @@ export function PLMappingsView() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Top bar */}
-      <div className="px-6 py-4 border-b bg-white shrink-0 flex items-center justify-between">
+      <div className="px-6 pt-4 pb-3 border-b bg-white shrink-0">
+        <div className="flex items-center justify-between mb-2.5">
         <div>
           <p className="text-sm font-semibold text-gray-800">Picklist Mappings</p>
           <p className="text-xs text-gray-400 mt-0.5">
@@ -237,6 +239,19 @@ export function PLMappingsView() {
           >
             + New mapping
           </button>
+        </div>
+        </div>
+        <div className="relative mt-2.5">
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search mappings…"
+            className="w-full pl-7 pr-6 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+          />
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300 text-xs select-none">⌕</span>
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>
+          )}
         </div>
       </div>
 
@@ -280,7 +295,22 @@ export function PLMappingsView() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {mappings.map(m => (
+            {mappings.filter(m => {
+              if (!search) return true
+              const q = search.toLowerCase()
+              return m.name.toLowerCase().includes(q)
+                || picklistName(m.sourcePicklistId).toLowerCase().includes(q)
+                || picklistName(m.targetPicklistId).toLowerCase().includes(q)
+            }).length === 0 ? (
+              <div className="col-span-3 text-center text-gray-400 text-sm mt-16">No mappings match "{search}"</div>
+            ) : null}
+            {mappings.filter(m => {
+              if (!search) return true
+              const q = search.toLowerCase()
+              return m.name.toLowerCase().includes(q)
+                || picklistName(m.sourcePicklistId).toLowerCase().includes(q)
+                || picklistName(m.targetPicklistId).toLowerCase().includes(q)
+            }).map(m => (
               <MappingCard
                 key={m.id}
                 mapping={m}

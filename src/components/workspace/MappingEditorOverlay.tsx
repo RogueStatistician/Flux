@@ -79,6 +79,7 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isDirty, setIsDirty] = useState(false)
+  const [search, setSearch] = useState('')
 
   // Import state
   const [importHeaders, setImportHeaders] = useState<string[] | null>(null)
@@ -293,6 +294,24 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
           )}
         </div>
 
+        {/* Search */}
+        {sourceValues.length > 0 && (
+          <div className="px-6 py-2 border-b bg-white shrink-0">
+            <div className="relative">
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Filter source values…"
+                className="w-full pl-7 pr-6 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+              />
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300 text-xs select-none">⌕</span>
+              {search && (
+                <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Content */}
         <div className="flex-1 overflow-auto">
           {loading ? (
@@ -319,7 +338,10 @@ export function MappingEditorOverlay({ mapping, picklists, onClose, onUpdated }:
               </div>
 
               <div className="divide-y divide-gray-50">
-                {sourceValues.map(sv => {
+                {search && sourceValues.filter(sv => sv.key.toLowerCase().includes(search.toLowerCase()) || sv.label?.toLowerCase().includes(search.toLowerCase())).length === 0 && (
+                  <p className="text-center text-gray-400 text-sm py-10">No values match "{search}"</p>
+                )}
+                {sourceValues.filter(sv => !search || sv.key.toLowerCase().includes(search.toLowerCase()) || sv.label?.toLowerCase().includes(search.toLowerCase())).map(sv => {
                   const isMapped = !!entries[sv.key]
                   return (
                     <div
