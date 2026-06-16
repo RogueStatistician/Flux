@@ -2,14 +2,31 @@ import { memo, useContext, useState, useRef, useEffect } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { EditorContext } from '../context.js'
 
+export interface JoinKeyPair {
+  a: string
+  b: string
+}
+
 export interface JoinNodeData extends Record<string, unknown> {
   joinType?: 'inner' | 'left' | 'right'
+  /** Legacy single-condition fields — kept for backward compat with canvases saved before
+   *  multi-condition joins were supported. Prefer `joinKeys` for new/edited nodes. */
   joinKeyA?: string
   joinKeyB?: string
+  /** Join conditions, combined with AND (e.g. country = country AND status = status). */
+  joinKeys?: JoinKeyPair[]
   /** Short prefix applied to all B-side field names in the engine output (e.g. "j1"). */
   aliasB?: string
   label?: string
   _renaming?: boolean
+}
+
+/** Returns the effective list of join condition pairs, falling back to the legacy
+ *  single joinKeyA/joinKeyB fields when `joinKeys` isn't set. */
+export function getJoinKeyPairs(data: Pick<JoinNodeData, 'joinKeys' | 'joinKeyA' | 'joinKeyB'>): JoinKeyPair[] {
+  if (data.joinKeys && data.joinKeys.length > 0) return data.joinKeys
+  if (data.joinKeyA || data.joinKeyB) return [{ a: data.joinKeyA ?? '', b: data.joinKeyB ?? '' }]
+  return []
 }
 
 function JoinOperatorNodeInner({ id, data, selected }: NodeProps) {
@@ -21,6 +38,7 @@ function JoinOperatorNodeInner({ id, data, selected }: NodeProps) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   const label = d.label?.trim() || 'Join'
+  const keyPairs = getJoinKeyPairs(d)
 
   useEffect(() => {
     if (editing) {
@@ -82,12 +100,14 @@ function JoinOperatorNodeInner({ id, data, selected }: NodeProps) {
         </div>
       </div>
 
-      {(d.joinKeyA || d.joinKeyB) && (
+      {keyPairs.length > 0 && (
         <div style={{ padding: '5px 14px', fontSize: 9, color: '#92400e', fontFamily: 'monospace' }}>
-          {d.joinKeyA ?? '?'} ↔ {d.joinKeyB ?? '?'}
+          {keyPairs.map((p, i) => (
+            <div key={i}>{p.a || '?'} ↔ {p.b || '?'}</div>
+          ))}
         </div>
       )}
-      {!d.joinKeyA && !d.joinKeyB && (
+      {keyPairs.length === 0 && (
         <div style={{ padding: '5px 14px', fontSize: 9, color: '#9ca3af' }}>click to configure</div>
       )}
       {d.aliasB && (

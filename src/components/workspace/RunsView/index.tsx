@@ -452,7 +452,12 @@ export function RunsView() {
           nodes: Array<{ id: string; type?: string; data: Record<string, unknown> }>
         }
         const badJoins = (canvas.nodes ?? [])
-          .filter(n => n.type === 'joinOperator' && (!n.data.joinKeyA || !n.data.joinKeyB))
+          .filter(n => {
+            if (n.type !== 'joinOperator') return false
+            const pairs = (n.data.joinKeys as Array<{ a: string; b: string }> | undefined)
+              ?? (n.data.joinKeyA || n.data.joinKeyB ? [{ a: n.data.joinKeyA as string, b: n.data.joinKeyB as string }] : [])
+            return pairs.length === 0 || pairs.some(p => !p.a || !p.b)
+          })
           .map(n => (n.data.label as string | undefined)?.trim() || n.id)
         if (badJoins.length > 0) {
           setValidationError(

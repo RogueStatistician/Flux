@@ -137,7 +137,7 @@ function buildPathBlock(path: TransformationQuery['paths'][number], pathLabel?: 
       const ref = step.rightAlias ?? step.rightSource
       const rowNote = step.rightRowCount !== null ? `  -- ${step.rightRowCount.toLocaleString()} rows` : ''
       lines.push(`${joinKeyword(step)} ${step.rightSource}${alias}${rowNote}`)
-      lines.push(`    ON ${step.leftKey} = ${ref}.${step.rightKey}`)
+      lines.push(`    ON ${step.keys.map(k => `${k.leftKey} = ${ref}.${k.rightKey}`).join(' AND ')}`)
     }
   } else {
     const rowNote = path.sourceRowCount !== null

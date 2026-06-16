@@ -481,14 +481,31 @@ function findPostJoinFilters(
 
 // ── Join execution ────────────────────────────────────────────────────────────
 
+interface JoinKeyPair {
+  a: string  // encoded as "objectId::fieldName"
+  b: string  // encoded as "objectId::fieldName"
+}
+
 interface JoinSpec {
   joinNodeId: string
   joinType: 'inner' | 'left' | 'right'
-  joinKeyA: string  // encoded as "objectId::fieldName"
-  joinKeyB: string  // encoded as "objectId::fieldName"
+  joinKeys: JoinKeyPair[]  // AND-combined join conditions
   sourceAId: string
   sourceBId: string
   aliasB?: string   // prefix applied to all B-side field names in merged output
+}
+
+/**
+ * Returns the effective join condition pairs for a join node's data, falling back to
+ * the legacy single joinKeyA/joinKeyB fields when `joinKeys` isn't set (older canvases).
+ */
+function getJoinKeyPairs(data: Record<string, unknown>): JoinKeyPair[] {
+  const pairs = data.joinKeys as JoinKeyPair[] | undefined
+  if (pairs && pairs.length > 0) return pairs
+  const a = (data.joinKeyA as string) ?? ''
+  const b = (data.joinKeyB as string) ?? ''
+  if (a || b) return [{ a, b }]
+  return []
 }
 
 /** Recursively finds the first sourceObject ID reachable upstream of nodeId. */
@@ -545,8 +562,7 @@ function findJoinSpec(targetObjectId: string, canvas: CanvasState): JoinSpec | n
         return {
           joinNodeId: srcNode.id,
           joinType: (srcNode.data.joinType as 'inner' | 'left' | 'right') ?? 'left',
-          joinKeyA: (srcNode.data.joinKeyA as string) ?? '',
-          joinKeyB: (srcNode.data.joinKeyB as string) ?? '',
+          joinKeys: getJoinKeyPairs(srcNode.data),
           sourceAId,
           sourceBId,
           aliasB: (srcNode.data.aliasB as string) || undefined,
@@ -590,8 +606,7 @@ function findJoinSpecFromNode(nodeId: string, canvas: CanvasState): JoinSpec | n
         return {
           joinNodeId: srcNode.id,
           joinType: (srcNode.data.joinType as 'inner' | 'left' | 'right') ?? 'left',
-          joinKeyA: (srcNode.data.joinKeyA as string) ?? '',
-          joinKeyB: (srcNode.data.joinKeyB as string) ?? '',
+          joinKeys: getJoinKeyPairs(srcNode.data),
           sourceAId,
           sourceBId,
           aliasB: (srcNode.data.aliasB as string) || undefined,
@@ -789,18 +804,21 @@ function decodeFieldName(encoded: string): string {
  * output — this lets the same source be joined multiple times without collisions.
  * Old projects without aliasB are unaffected (no prefix applied).
  */
+/** Separator used to join composite key values — unlikely to appear in real data. */
+const COMPOSITE_KEY_SEP = ''
+
 function executeJoin(
   rowsA: Record<string, string>[],
   rowsB: Record<string, string>[],
   spec: JoinSpec,
 ): Record<string, string>[] {
-  const keyA = decodeFieldName(spec.joinKeyA)
-  const keyB = decodeFieldName(spec.joinKeyB)
+  const keys = spec.joinKeys
+    .map(p => ({ a: decodeFieldName(p.a), b: decodeFieldName(p.b) }))
 
-  if (!keyA || !keyB) {
+  if (keys.length === 0 || keys.some(k => !k.a || !k.b)) {
     const label = spec.joinNodeId ? ` (node ${spec.joinNodeId})` : ''
     throw new Error(
-      `Join${label} is missing key configuration — both sides must have a join key set. ` +
+      `Join${label} is missing key configuration — every join condition must have both sides set. ` +
       `Open the Join panel to configure the key fields before running.`
     )
   }
@@ -815,10 +833,15 @@ function executeJoin(
     return out
   }
 
-  // Index B rows by their join key value (on original, un-prefixed names)
+  // Build a composite key from a row's values across all join conditions (AND semantics).
+  function compositeKey(row: Record<string, string>, side: 'a' | 'b'): string {
+    return keys.map(k => row[side === 'a' ? k.a : k.b] ?? '').join(COMPOSITE_KEY_SEP)
+  }
+
+  // Index B rows by their composite join key value (on original, un-prefixed names)
   const bIndex = new Map<string, Record<string, string>[]>()
   for (const row of rowsB) {
-    const k = row[keyB] ?? ''
+    const k = compositeKey(row, 'b')
     if (!bIndex.has(k)) bIndex.set(k, [])
     bIndex.get(k)!.push(row)
   }
@@ -828,7 +851,7 @@ function executeJoin(
   if (spec.joinType === 'inner' || spec.joinType === 'left') {
     const emptyB: Record<string, string> = {}
     for (const rowA of rowsA) {
-      const matches = bIndex.get(rowA[keyA] ?? '') ?? (spec.joinType === 'left' ? [emptyB] : [])
+      const matches = bIndex.get(compositeKey(rowA, 'a')) ?? (spec.joinType === 'left' ? [emptyB] : [])
       for (const rowB of matches) {
         result.push({ ...prefixB(rowB), ...rowA })  // A fields win on collision
       }
@@ -837,13 +860,13 @@ function executeJoin(
     // right join: B is the "driving" side
     const aIndex = new Map<string, Record<string, string>[]>()
     for (const row of rowsA) {
-      const k = row[keyA] ?? ''
+      const k = compositeKey(row, 'a')
       if (!aIndex.has(k)) aIndex.set(k, [])
       aIndex.get(k)!.push(row)
     }
     const emptyA: Record<string, string> = {}
     for (const rowB of rowsB) {
-      const matches = aIndex.get(rowB[keyB] ?? '') ?? [emptyA]
+      const matches = aIndex.get(compositeKey(rowB, 'b')) ?? [emptyA]
       const pB = prefixB(rowB)
       for (const rowA of matches) {
         result.push({ ...rowA, ...pB })  // B fields win on collision
@@ -886,8 +909,7 @@ function collectRowsFromNode(
       return executeJoin(rowsA, rowsB, {
         joinNodeId: nodeId,
         joinType: (node.data.joinType as 'inner' | 'left' | 'right') ?? 'left',
-        joinKeyA: (node.data.joinKeyA as string) ?? '',
-        joinKeyB: (node.data.joinKeyB as string) ?? '',
+        joinKeys: getJoinKeyPairs(node.data),
         sourceAId: '',
         sourceBId: '',
         aliasB: (node.data.aliasB as string) || undefined,
@@ -991,7 +1013,10 @@ async function _runEngine(runId: string, transformationId: string): Promise<void
   if (canvas) {
     const badJoins = canvas.nodes
       .filter(n => n.type === 'joinOperator')
-      .filter(n => !n.data.joinKeyA || !n.data.joinKeyB)
+      .filter(n => {
+        const pairs = getJoinKeyPairs(n.data)
+        return pairs.length === 0 || pairs.some(p => !p.a || !p.b)
+      })
       .map(n => (n.data.label as string | undefined)?.trim() || n.id)
 
     if (badJoins.length > 0) {

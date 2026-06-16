@@ -161,13 +161,19 @@ export interface MappingLine {
   rawConfig: string
 }
 
+/** One AND-combined join condition within a JoinStep. */
+export interface JoinKeyCondition {
+  leftKey: string
+  rightKey: string
+}
+
 /** One JOIN step in a cascaded join chain. */
 export interface JoinStep {
   joinType: 'inner' | 'left' | 'right'
   rightSource: string
   rightRowCount: number | null
-  leftKey: string
-  rightKey: string
+  /** All AND-combined join conditions for this step. */
+  keys: JoinKeyCondition[]
   rightAlias?: string
 }
 
