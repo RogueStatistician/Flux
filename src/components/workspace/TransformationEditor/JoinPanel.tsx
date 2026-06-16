@@ -8,7 +8,8 @@
 import { useState, useMemo } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import type { DataObject, ObjectField } from '../../../types/index.js'
-import type { JoinNodeData } from './nodes/JoinOperatorNode.js'
+import type { JoinNodeData, JoinKeyPair } from './nodes/JoinOperatorNode.js'
+import { getJoinKeyPairs } from './nodes/JoinOperatorNode.js'
 import { findUpstreamByHandle, collectJoinAliasGroups, SourceFieldPicker } from './shared.js'
 
 const JOIN_TYPES: Array<{ value: 'inner' | 'left' | 'right'; label: string; desc: string }> = [
@@ -39,9 +40,26 @@ export function JoinPanel({
   onClose,
 }: Props) {
   const [joinType, setJoinType] = useState<'inner' | 'left' | 'right'>(initialData.joinType ?? 'left')
-  const [joinKeyA, setJoinKeyA] = useState(initialData.joinKeyA ?? '')
-  const [joinKeyB, setJoinKeyB] = useState(initialData.joinKeyB ?? '')
+  const [keyPairs, setKeyPairs] = useState<JoinKeyPair[]>(() => {
+    const pairs = getJoinKeyPairs(initialData)
+    return pairs.length > 0 ? pairs : [{ a: '', b: '' }]
+  })
   const [aliasB, setAliasB] = useState(initialData.aliasB ?? '')
+
+  function updatePair(index: number, side: 'a' | 'b', value: string) {
+    setKeyPairs(prev => prev.map((p, i) => (i === index ? { ...p, [side]: value } : p)))
+  }
+
+  function addPair() {
+    setKeyPairs(prev => [...prev, { a: '', b: '' }])
+  }
+
+  function removePair(index: number) {
+    setKeyPairs(prev => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev))
+  }
+
+  // First key's B field is used for the alias example below.
+  const firstKeyB = keyPairs[0]?.b ?? ''
 
   const upstreamA = useMemo(() => findUpstreamByHandle(joinNodeId, 'input-a', nodes, edges), [joinNodeId, nodes, edges])
   const upstreamB = useMemo(() => findUpstreamByHandle(joinNodeId, 'input-b', nodes, edges), [joinNodeId, nodes, edges])
@@ -90,7 +108,15 @@ export function JoinPanel({
   const labelB = upstreamB.length === 1 ? (allObjects.find(o => o.id === upstreamB[0])?.name ?? 'Input B') : 'Input B'
 
   function handleSave() {
-    onSave({ joinType, joinKeyA, joinKeyB, aliasB: aliasB.trim() || undefined })
+    const cleanedPairs = keyPairs.filter(p => p.a || p.b)
+    onSave({
+      joinType,
+      joinKeys: cleanedPairs.length > 0 ? cleanedPairs : keyPairs.slice(0, 1),
+      // Keep legacy fields in sync with the first condition for older code paths.
+      joinKeyA: keyPairs[0]?.a ?? '',
+      joinKeyB: keyPairs[0]?.b ?? '',
+      aliasB: aliasB.trim() || undefined,
+    })
     onClose()
   }
 
@@ -149,39 +175,65 @@ export function JoinPanel({
           {/* Join keys */}
           <div>
             <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Join keys</p>
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold text-orange-600 w-24 shrink-0">
-                  {labelA} (A)
-                </span>
-                <SourceFieldPicker
-                  value={joinKeyA}
-                  sourceObjects={allObjects}
-                  fieldsMap={extendedFieldsMapA}
-                  upstreamSourceIds={extendedUpstreamA}
-                  sourceGroupLabels={groupLabelsA}
-                  onChange={setJoinKeyA}
-                  placeholder="— pick key field —"
-                  className="flex-1"
-                />
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold text-orange-600 w-24 shrink-0">
-                  {labelB} (B)
-                </span>
-                <SourceFieldPicker
-                  value={joinKeyB}
-                  sourceObjects={allObjects}
-                  fieldsMap={fieldsMap}
-                  upstreamSourceIds={upstreamB}
-                  onChange={setJoinKeyB}
-                  placeholder="— pick key field —"
-                  className="flex-1"
-                />
-              </div>
+            <div className="space-y-4">
+              {keyPairs.map((pair, i) => (
+                <div key={i} className="space-y-2">
+                  {i > 0 && (
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">AND</p>
+                  )}
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 space-y-2">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-semibold text-orange-600 w-24 shrink-0">
+                          {labelA} (A)
+                        </span>
+                        <SourceFieldPicker
+                          value={pair.a}
+                          sourceObjects={allObjects}
+                          fieldsMap={extendedFieldsMapA}
+                          upstreamSourceIds={extendedUpstreamA}
+                          sourceGroupLabels={groupLabelsA}
+                          onChange={v => updatePair(i, 'a', v)}
+                          placeholder="— pick key field —"
+                          className="flex-1"
+                        />
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-semibold text-orange-600 w-24 shrink-0">
+                          {labelB} (B)
+                        </span>
+                        <SourceFieldPicker
+                          value={pair.b}
+                          sourceObjects={allObjects}
+                          fieldsMap={fieldsMap}
+                          upstreamSourceIds={upstreamB}
+                          onChange={v => updatePair(i, 'b', v)}
+                          placeholder="— pick key field —"
+                          className="flex-1"
+                        />
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => removePair(i)}
+                      disabled={keyPairs.length === 1}
+                      className="mt-1 text-gray-300 hover:text-red-500 disabled:opacity-0 disabled:pointer-events-none text-lg leading-none transition-colors"
+                      title="Remove condition"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
+            <button
+              onClick={addPair}
+              className="mt-3 text-xs font-medium text-orange-600 hover:text-orange-700 transition-colors"
+            >
+              + Add condition
+            </button>
             <p className="text-xs text-gray-400 mt-2">
-              Rows are matched when the value of key A equals the value of key B.
+              Rows are matched when the value of key A equals the value of key B for{' '}
+              {keyPairs.length > 1 ? 'every condition (AND)' : 'this condition'}.
             </p>
           </div>
 
@@ -203,7 +255,7 @@ export function JoinPanel({
             />
             {aliasB && (
               <p className="text-xs text-orange-600 mt-1 font-mono">
-                Example: {aliasB}_{(joinKeyB.includes('::') ? joinKeyB.split('::')[1] : joinKeyB) || 'fieldname'}
+                Example: {aliasB}_{(firstKeyB.includes('::') ? firstKeyB.split('::')[1] : firstKeyB) || 'fieldname'}
               </p>
             )}
           </div>

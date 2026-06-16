@@ -27,12 +27,17 @@ export interface MappingLine {
   rawConfig: string
 }
 
+export interface JoinKeyCondition {
+  leftKey: string
+  rightKey: string
+}
+
 export interface JoinStep {
   joinType: 'inner' | 'left' | 'right'
   rightSource: string
   rightRowCount: number | null
-  leftKey: string
-  rightKey: string
+  /** All AND-combined join conditions for this step. */
+  keys: JoinKeyCondition[]
   rightAlias?: string
 }
 
@@ -309,7 +314,8 @@ function resolvePathSource(mapNodeId: string, canvas: Canvas): PathSource {
           const kw = s.joinType === 'inner' ? 'INNER JOIN' : s.joinType === 'right' ? 'RIGHT JOIN' : 'LEFT JOIN'
           const alias = s.rightAlias ? ` ${s.rightAlias}` : ''
           const ref = s.rightAlias ?? s.rightSource
-          parts.push(`${kw} ${s.rightSource}${alias} ON ${s.leftKey} = ${ref}.${s.rightKey}`)
+          const on = s.keys.map(k => `${k.leftKey} = ${ref}.${k.rightKey}`).join(' AND ')
+          parts.push(`${kw} ${s.rightSource}${alias} ON ${on}`)
         }
         rightSource = `(${parts.join(' ')})`
       } else if (chainB) {
@@ -323,16 +329,18 @@ function resolvePathSource(mapNodeId: string, canvas: Canvas): PathSource {
         rightRowCount = bObj.rowCount
       }
 
-      const rawKeyA = (node.data?.joinKeyA as string) ?? ''
-      const rawKeyB = (node.data?.joinKeyB as string) ?? ''
+      const rawPairs = (node.data?.joinKeys as Array<{ a: string; b: string }> | undefined)
+        ?? (node.data?.joinKeyA || node.data?.joinKeyB
+          ? [{ a: (node.data?.joinKeyA as string) ?? '', b: (node.data?.joinKeyB as string) ?? '' }]
+          : [])
+      const keys: JoinKeyCondition[] = rawPairs.map(p => ({ leftKey: stripKey(p.a), rightKey: stripKey(p.b) }))
       const rightAlias = (node.data?.aliasB as string) || undefined
 
       chainA.steps.push({
         joinType: (node.data?.joinType as 'inner' | 'left' | 'right') ?? 'left',
         rightSource,
         rightRowCount,
-        leftKey: stripKey(rawKeyA),
-        rightKey: stripKey(rawKeyB),
+        keys,
         rightAlias,
       })
 
