@@ -127,7 +127,7 @@ export function JoinPanel({
     >
       <div
         className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
-        style={{ width: 'min(95vw, 560px)' }}
+        style={{ width: 'min(95vw, 560px)', maxHeight: 'min(90vh, 700px)' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -147,7 +147,7 @@ export function JoinPanel({
         </div>
 
         {/* Body */}
-        <div className="px-6 py-5 space-y-6">
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
 
           {/* Join type */}
           <div>
