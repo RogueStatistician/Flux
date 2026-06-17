@@ -102,9 +102,11 @@ function JoinOperatorNodeInner({ id, data, selected }: NodeProps) {
 
       {keyPairs.length > 0 && (
         <div style={{ padding: '5px 14px', fontSize: 9, color: '#92400e', fontFamily: 'monospace' }}>
-          {keyPairs.map((p, i) => (
-            <div key={i}>{p.a || '?'} ↔ {p.b || '?'}</div>
-          ))}
+          {keyPairs.map((p, i) => {
+            const aName = (sep => sep >= 0 ? p.a.slice(sep + 2) : p.a)(p.a.indexOf('::'))
+            const bName = (sep => sep >= 0 ? p.b.slice(sep + 2) : p.b)(p.b.indexOf('::'))
+            return <div key={i}>{aName || '?'} ↔ {bName || '?'}</div>
+          })}
         </div>
       )}
       {keyPairs.length === 0 && (

@@ -93,25 +93,28 @@ export function collectJoinAliasGroups(
     if (visited.has(id)) return
     visited.add(id)
 
+    // Process the current node itself if it is a join operator — this handles the case
+    // where the caller passes a joinOperator node ID directly (e.g. when the A-side of
+    // an outer join connects straight to an inner join with aliasB set, and there is no
+    // intermediate filter/dedup node in between).
+    const selfNode = nodes.find(n => n.id === id)
+    if (selfNode?.type === 'joinOperator' && !seenJoins.has(id)) {
+      seenJoins.add(id)
+      const aliasB = ((selfNode.data as Record<string, unknown>).aliasB as string | undefined)?.trim()
+      if (aliasB) {
+        const bSourceIds = findUpstreamByHandle(id, 'input-b', nodes, edges)
+        if (bSourceIds.length > 0) {
+          groups.push({ virtualId: `_join_alias_${aliasB}`, aliasPrefix: aliasB, bSourceIds })
+        }
+      }
+    }
+
     for (const edge of edges) {
       if (edge.target !== id) continue
       const srcNode = nodes.find(n => n.id === edge.source)
       if (!srcNode) continue
 
       if (srcNode.type === 'joinOperator') {
-        if (!seenJoins.has(srcNode.id)) {
-          seenJoins.add(srcNode.id)
-          const aliasB = ((srcNode.data as Record<string, unknown>).aliasB as string | undefined)?.trim()
-          if (aliasB) {
-            // findUpstreamByHandle correctly handles the case where the B-side edge
-            // connects directly to a sourceObject node (reads objectId instead of
-            // looking for incoming edges, which sourceObjects don't have).
-            const bSourceIds = findUpstreamByHandle(srcNode.id, 'input-b', nodes, edges)
-            if (bSourceIds.length > 0) {
-              groups.push({ virtualId: `_join_alias_${aliasB}`, aliasPrefix: aliasB, bSourceIds })
-            }
-          }
-        }
         walk(srcNode.id, new Set(visited))
       } else {
         walk(srcNode.id, visited)
