@@ -116,6 +116,7 @@ export interface IPlatform {
   getFieldMappings(transformationId: string): Promise<FieldMapping[]>
   getFieldMappingsByNode(mapNodeId: string): Promise<FieldMapping[]>
   deleteFieldMappingsByNode(mapNodeId: string): Promise<void>
+  retargetFieldMappingsByNode(mapNodeId: string, newTargetObjectId: string, fieldIdMap: Record<string, string>): Promise<FieldMapping[]>
 
   // ── Runs & export ──────────────────────────────────────────────────────────
   startRun(transformationId: string): Promise<string>

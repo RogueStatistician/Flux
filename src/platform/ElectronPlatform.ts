@@ -66,6 +66,7 @@ export class ElectronPlatform implements IPlatform {
   getFieldMappings(transformationId: string) { return window.electronAPI.getFieldMappings(transformationId) }
   getFieldMappingsByNode(mapNodeId: string) { return window.electronAPI.getFieldMappingsByNode(mapNodeId) }
   deleteFieldMappingsByNode(mapNodeId: string) { return window.electronAPI.deleteFieldMappingsByNode(mapNodeId) }
+  retargetFieldMappingsByNode(mapNodeId: string, newTargetObjectId: string, fieldIdMap: Record<string, string>) { return window.electronAPI.retargetFieldMappingsByNode(mapNodeId, newTargetObjectId, fieldIdMap) }
 
   // ── Runs & export ────────────────────────────────────────────────────────
   startRun(transformationId: string) { return window.electronAPI.startRun(transformationId) }

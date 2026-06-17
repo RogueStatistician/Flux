@@ -380,7 +380,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
     })
   }, [scheduleSave])
 
-  // ── Connect handler — creates canvas edge only (no field_mappings) ─────────
+  // ── Connect handler — creates canvas edge; migrates field mappings on target swap ─
 
   const onConnect = useCallback((conn: Connection) => {
     const { source, target, sourceHandle, targetHandle } = conn
@@ -405,12 +405,61 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
       targetHandle: targetHandle ?? undefined,
     }
 
+    // When a mapOperator is connected to a different targetObject than the one stored in its
+    // data, retarget all its field mappings to the new target (matching by field name) so the
+    // user can swap the target object while keeping all their mapping rules.
+    if (targetNode?.type === 'targetObject') {
+      const sourceNode = nodesRef.current.find(n => n.id === source)
+      if (sourceNode?.type === 'mapOperator') {
+        const oldTargetObjectId = (sourceNode.data as Record<string, unknown>).targetObjectId as string | undefined
+        const newTargetObjectId = (targetNode.data as Record<string, unknown>).objectId as string | undefined
+        const newTargetName = (targetNode.data as Record<string, unknown>).name as string | undefined
+        if (oldTargetObjectId && newTargetObjectId && oldTargetObjectId !== newTargetObjectId) {
+          // Build old-field-id → new-field-id map by matching on field name
+          const oldFields = fieldsMap[oldTargetObjectId] ?? []
+          const newFields = fieldsMap[newTargetObjectId] ?? []
+          const newFieldByName = new Map(newFields.map(f => [f.name, f.id]))
+          const fieldIdMap: Record<string, string> = {}
+          for (const f of oldFields) {
+            const newId = newFieldByName.get(f.name)
+            if (newId) fieldIdMap[f.id] = newId
+          }
+          const nodeMappings = fieldMappings.filter(m => m.mapNodeId === source)
+          if (nodeMappings.length > 0) {
+            platform.retargetFieldMappingsByNode(source, newTargetObjectId, fieldIdMap)
+              .then(newMappings => {
+                setFieldMappings(prev => [
+                  ...prev.filter(m => m.mapNodeId !== source),
+                  ...newMappings,
+                ])
+              })
+              .catch(err => setCanvasError(`Failed to migrate mappings: ${err instanceof Error ? err.message : String(err)}`))
+          }
+          // Update the map node's stored target and persist canvas (including the new edge)
+          setNodes(nds => {
+            const updated = nds.map(n => n.id !== source ? n : {
+              ...n,
+              data: {
+                ...n.data,
+                targetObjectId: newTargetObjectId,
+                targetObjectName: newTargetName ?? newTargetObjectId,
+              },
+            })
+            scheduleSave(updated, addEdge(newEdge, edgesRef.current))
+            return updated
+          })
+          setEdges(eds => addEdge(newEdge, eds))
+          return  // edge already added via setNodes path above
+        }
+      }
+    }
+
     setEdges(eds => {
       const updated = addEdge(newEdge, eds)
       scheduleSave(nodesRef.current, updated)
       return updated
     })
-  }, [scheduleSave])
+  }, [scheduleSave, fieldMappings, fieldsMap])
 
   // ── Dock: add / remove sources ────────────────────────────────────────────
 

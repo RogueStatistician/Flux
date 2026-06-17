@@ -175,6 +175,9 @@ const electronAPI = {
   deleteFieldMappingsByNode: (mapNodeId: string) =>
     ipcRenderer.invoke('transformations:deleteFieldMappingsByNode', mapNodeId),
 
+  retargetFieldMappingsByNode: (mapNodeId: string, newTargetObjectId: string, fieldIdMap: Record<string, string>) =>
+    ipcRenderer.invoke('transformations:retargetFieldMappingsByNode', mapNodeId, newTargetObjectId, fieldIdMap),
+
   // ── Runs & export ──────────────────────────────────────────────────────────
   startRun: (transformationId: string) =>
     ipcRenderer.invoke('run:start', transformationId),

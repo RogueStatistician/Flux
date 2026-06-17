@@ -189,6 +189,7 @@ export class WebPlatform implements IPlatform {
   getFieldMappings(transformationId: string):Promise<FieldMapping[]> { return api('/transformations/getFieldMappings', { transformationId }) }
   getFieldMappingsByNode(mapNodeId: string):Promise<FieldMapping[]> { return api('/transformations/getFieldMappingsByNode', { mapNodeId }) }
   deleteFieldMappingsByNode(mapNodeId: string):Promise<void> { return api('/transformations/deleteFieldMappingsByNode', { mapNodeId }) }
+  retargetFieldMappingsByNode(mapNodeId: string, newTargetObjectId: string, fieldIdMap: Record<string, string>):Promise<FieldMapping[]> { return api('/transformations/retargetFieldMappingsByNode', { mapNodeId, newTargetObjectId, fieldIdMap }) }
   startRun(transformationId: string):Promise<string> { return api<string>('/run/start', { transformationId }) }
   cancelRun(runId: string):Promise<void> { return api('/run/cancel', { runId }) }
   getRun(runId: string):Promise<Run> { return api('/run/get', { runId }) }
