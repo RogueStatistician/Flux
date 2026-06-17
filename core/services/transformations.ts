@@ -270,3 +270,48 @@ export function getFieldMappingsByNode(mapNodeId: string) {
 export function deleteFieldMappingsByNode(mapNodeId: string) {
   getDb().prepare('DELETE FROM field_mappings WHERE map_node_id = ?').run(mapNodeId)
 }
+
+/**
+ * Re-key all field mappings owned by a MapNode to a new target object.
+ * fieldIdMap maps each old target_field_id to the matching new target_field_id
+ * (computed on the frontend by matching field names). Old mappings are deleted and
+ * re-inserted atomically; fields absent from fieldIdMap are dropped.
+ */
+export function retargetFieldMappingsByNode(
+  mapNodeId: string,
+  newTargetObjectId: string,
+  fieldIdMap: Record<string, string>,
+) {
+  const db = getDb()
+  const existing = db.prepare(
+    'SELECT * FROM field_mappings WHERE map_node_id = ?'
+  ).all(mapNodeId) as FieldMappingRow[]
+
+  const inserted: FieldMappingRow[] = []
+
+  db.transaction(() => {
+    db.prepare('DELETE FROM field_mappings WHERE map_node_id = ?').run(mapNodeId)
+    for (const row of existing) {
+      const newFieldId = fieldIdMap[row.target_field_id]
+      if (!newFieldId) continue
+      const newId = crypto.randomUUID()
+      db.prepare(`
+        INSERT INTO field_mappings
+          (id, transformation_id, target_object_id, target_field_id, map_node_id, rule_type, rule_config, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(newId, row.transformation_id, newTargetObjectId, newFieldId, mapNodeId, row.rule_type, row.rule_config, row.notes)
+      inserted.push({
+        id: newId,
+        transformation_id: row.transformation_id,
+        target_object_id: newTargetObjectId,
+        target_field_id: newFieldId,
+        map_node_id: mapNodeId,
+        rule_type: row.rule_type,
+        rule_config: row.rule_config,
+        notes: row.notes,
+      })
+    }
+  })()
+
+  return inserted.map(rowToFieldMapping)
+}

@@ -7,6 +7,7 @@ import {
   saveCanvas, deleteTransformation, duplicateTransformation,
   createFieldMapping, updateFieldMapping, deleteFieldMapping,
   deleteFieldMappingsByTarget, getFieldMappings, getFieldMappingsByNode, deleteFieldMappingsByNode,
+  retargetFieldMappingsByNode,
 } from '../../core/services/transformations.js'
 
 export function registerTransformationHandlers(): void {
@@ -24,4 +25,5 @@ export function registerTransformationHandlers(): void {
   ipcMain.handle('transformations:getFieldMappings', async (_e, transformationId: string) => getFieldMappings(transformationId))
   ipcMain.handle('transformations:getFieldMappingsByNode', async (_e, mapNodeId: string) => getFieldMappingsByNode(mapNodeId))
   ipcMain.handle('transformations:deleteFieldMappingsByNode', async (_e, mapNodeId: string) => deleteFieldMappingsByNode(mapNodeId))
+  ipcMain.handle('transformations:retargetFieldMappingsByNode', async (_e, mapNodeId: string, newTargetObjectId: string, fieldIdMap: Record<string, string>) => retargetFieldMappingsByNode(mapNodeId, newTargetObjectId, fieldIdMap))
 }
