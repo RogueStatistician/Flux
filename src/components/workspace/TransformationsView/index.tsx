@@ -169,6 +169,9 @@ export function TransformationsView() {
   // Create form error
   const [createError, setCreateError] = useState<string | null>(null)
 
+  // Search filter
+  const [search, setSearch] = useState('')
+
   const load = useCallback(async () => {
     const all = await platform.listTransformations()
     setTransformations(all)
@@ -255,16 +258,25 @@ export function TransformationsView() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Top bar */}
-      <div className="px-6 py-4 border-b bg-white shrink-0 flex items-center justify-between">
-        <div>
+      <div className="px-6 py-4 border-b bg-white shrink-0 flex items-center justify-between gap-4">
+        <div className="shrink-0">
           <p className="text-sm font-semibold text-gray-800">Transformations</p>
           <p className="text-xs text-gray-400 mt-0.5">
             Visual field-mapping rules between source and target objects
           </p>
         </div>
+        {!loading && transformations.length > 0 && (
+          <input
+            type="search"
+            placeholder="Search…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="flex-1 max-w-xs px-3 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-violet-400"
+          />
+        )}
         <button
           onClick={() => setShowForm(v => !v)}
-          className="px-4 py-2 bg-violet-600 text-white text-sm font-medium rounded-lg hover:bg-violet-700 transition-colors"
+          className="shrink-0 px-4 py-2 bg-violet-600 text-white text-sm font-medium rounded-lg hover:bg-violet-700 transition-colors"
         >
           + New transformation
         </button>
@@ -346,21 +358,31 @@ export function TransformationsView() {
               New transformation
             </button>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {transformations.map(t => (
-              <TransformationCard
-                key={t.id}
-                transformation={t}
-                mappingCount={mappingCounts[t.id] ?? 0}
-                onClick={() => setEditingId(t.id)}
-                onDelete={() => handleDelete(t.id)}
-                onDuplicate={() => handleDuplicate(t.id)}
-                onRenameRequest={() => startRename(t)}
-              />
-            ))}
-          </div>
-        )}
+        ) : (() => {
+          const filtered = search
+            ? transformations.filter(t => t.name.toLowerCase().includes(search.toLowerCase()))
+            : transformations
+          if (filtered.length === 0) return (
+            <div className="text-center text-sm text-gray-400 mt-20">
+              No transformations match <span className="font-medium text-gray-500">"{search}"</span>
+            </div>
+          )
+          return (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filtered.map(t => (
+                <TransformationCard
+                  key={t.id}
+                  transformation={t}
+                  mappingCount={mappingCounts[t.id] ?? 0}
+                  onClick={() => setEditingId(t.id)}
+                  onDelete={() => handleDelete(t.id)}
+                  onDuplicate={() => handleDuplicate(t.id)}
+                  onRenameRequest={() => startRename(t)}
+                />
+              ))}
+            </div>
+          )
+        })()}
       </div>
     </div>
   )
