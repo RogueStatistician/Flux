@@ -310,20 +310,34 @@ function DateFormatEditor({
         upstreamSourceIds={upstreamSourceIds}
         sourceGroupLabels={sourceGroupLabels}
         onChange={v => {
-          if (!v) { onChange({ ...config, sourceObjectId: undefined, sourceFieldName: undefined }); return }
+          if (!v) { onChange({ ...config, sourceObjectId: undefined, sourceFieldName: undefined, sourceFormat: undefined }); return }
           const { sourceObjectId, sourceFieldName } = decodeField(v)
-          onChange({ ...config, sourceObjectId, sourceFieldName })
+          const schemaFmt = fieldsMap[sourceObjectId]?.find(f => f.name === sourceFieldName)?.dateFormat
+          onChange({ ...config, sourceObjectId, sourceFieldName, sourceFormat: schemaFmt ?? config.sourceFormat })
         }}
       />
-      <span className="text-sm text-gray-400 shrink-0">→ format</span>
+      <span className="text-xs text-gray-400 shrink-0">from</span>
       <input
-        list="date-fmt-list"
+        list="date-fmt-src-list"
+        value={(config.sourceFormat as string) ?? ''}
+        onChange={e => onChange({ ...config, sourceFormat: e.target.value || undefined })}
+        className="w-32 border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-400"
+        placeholder="auto"
+        title="Source date format — set this to avoid ambiguous MM/DD vs DD/MM parsing"
+      />
+      <span className="text-xs text-gray-400 shrink-0">→</span>
+      <input
+        list="date-fmt-out-list"
         value={(config.outputFormat as string) ?? 'YYYY-MM-DD'}
         onChange={e => onChange({ ...config, outputFormat: e.target.value })}
-        className="w-36 border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-400"
+        className="w-32 border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-400"
         placeholder="YYYY-MM-DD"
+        title="Output date format"
       />
-      <datalist id="date-fmt-list">
+      <datalist id="date-fmt-src-list">
+        {DATE_FORMAT_SUGGESTIONS.map(f => <option key={f} value={f} />)}
+      </datalist>
+      <datalist id="date-fmt-out-list">
         {DATE_FORMAT_SUGGESTIONS.map(f => <option key={f} value={f} />)}
       </datalist>
     </div>

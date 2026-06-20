@@ -268,7 +268,7 @@ function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 sticky top-0">
               <tr>
-                {['#', 'Field Name', 'Description', 'Type', 'Picklist', 'Req'].map(h => (
+                {['#', 'Field Name', 'Description', 'Type', 'Date Format', 'Picklist', 'Req'].map(h => (
                   <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
                     {h}
                   </th>
@@ -296,6 +296,7 @@ function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
                       onChange={e => updateField(f.id, {
                         dataType: e.target.value as typeof FIELD_TYPES[number],
                         picklistId: e.target.value !== 'picklist' ? undefined : f.picklistId,
+                        dateFormat: !['date', 'datetime'].includes(e.target.value) ? undefined : f.dateFormat,
                       })}
                       className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
                     >
@@ -303,6 +304,27 @@ function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
                         <option key={t} value={t}>{t}</option>
                       ))}
                     </select>
+                  </td>
+                  <td className="px-4 py-2">
+                    {(f.dataType === 'date' || f.dataType === 'datetime') ? (
+                      <>
+                        <input
+                          list="schema-date-fmt-list"
+                          value={f.dateFormat ?? ''}
+                          onChange={e => updateField(f.id, { dateFormat: e.target.value || undefined })}
+                          className="w-28 text-xs font-mono border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                          placeholder="DD/MM/YYYY"
+                          title="The format dates appear in this column (e.g. DD/MM/YYYY)"
+                        />
+                        <datalist id="schema-date-fmt-list">
+                          {['DD/MM/YYYY','MM/DD/YYYY','YYYY-MM-DD','YYYY/MM/DD','DD-MM-YYYY','MM-DD-YYYY','YYYYMMDD'].map(f => (
+                            <option key={f} value={f} />
+                          ))}
+                        </datalist>
+                      </>
+                    ) : (
+                      <span className="text-gray-300 text-xs">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-2">
                     {f.dataType === 'picklist' ? (
@@ -359,7 +381,7 @@ function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 sticky top-0">
             <tr>
-              {['#', 'Field Name', 'Description', 'Type', 'Required'].map(h => (
+              {['#', 'Field Name', 'Description', 'Type', 'Date Format', 'Required'].map(h => (
                 <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                   {h}
                 </th>
@@ -380,6 +402,11 @@ function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${TYPE_COLORS[f.dataType] ?? 'bg-gray-100 text-gray-600'}`}>
                     {f.dataType}
                   </span>
+                </td>
+                <td className="px-4 py-2.5 text-xs font-mono">
+                  {(f.dataType === 'date' || f.dataType === 'datetime') && f.dateFormat
+                    ? <span className="text-amber-700">{f.dateFormat}</span>
+                    : <span className="text-gray-300">—</span>}
                 </td>
                 <td className="px-4 py-2.5 text-xs">
                   {f.isRequired

@@ -1,6 +1,6 @@
 {
   "name": "flux",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Flux — Field Level Universal EXchange",
   "main": "dist-electron/main.js",
   "type": "module",
