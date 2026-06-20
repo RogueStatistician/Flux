@@ -470,16 +470,13 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
     if (isOnCanvas) {
       // Remove the node and its edges — mappings are preserved (column-name based).
       // The MapPanel will flag any rules that reference fields no longer available.
-      setNodes(nds => {
-        const updated = nds.filter(n => n.id !== nodeId)
-        scheduleSave(updated, edgesRef.current)
-        return updated
-      })
-      setEdges(eds => {
-        const updated = eds.filter(e => e.source !== nodeId && e.target !== nodeId)
-        scheduleSave(nodesRef.current, updated)
-        return updated
-      })
+      // Compute both updates from refs before any setState so scheduleSave gets
+      // consistent lists (refs lag behind by one render if called via functional setter).
+      const updatedNodes = nodesRef.current.filter(n => n.id !== nodeId)
+      const updatedEdges = edgesRef.current.filter(e => e.source !== nodeId && e.target !== nodeId)
+      setNodes(updatedNodes)
+      setEdges(updatedEdges)
+      scheduleSave(updatedNodes, updatedEdges)
     } else {
       const srcCount = nodesRef.current.filter(n => n.type === 'sourceObject').length
       const newNode: Node = {
@@ -509,16 +506,11 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
         .map(n => n.id)
       const idsToRemove = new Set([tgtNodeId, ...mapNodeIdsToRemove])
 
-      setNodes(nds => {
-        const updated = nds.filter(n => !idsToRemove.has(n.id))
-        scheduleSave(updated, edgesRef.current)
-        return updated
-      })
-      setEdges(eds => {
-        const updated = eds.filter(e => !idsToRemove.has(e.source) && !idsToRemove.has(e.target))
-        scheduleSave(nodesRef.current, updated)
-        return updated
-      })
+      const updatedNodes = nodesRef.current.filter(n => !idsToRemove.has(n.id))
+      const updatedEdges = edgesRef.current.filter(e => !idsToRemove.has(e.source) && !idsToRemove.has(e.target))
+      setNodes(updatedNodes)
+      setEdges(updatedEdges)
+      scheduleSave(updatedNodes, updatedEdges)
       // Delete ALL field mapping rules for this target (all MapNodes + legacy null-scoped)
       platform.deleteFieldMappingsByTarget(transformationId, obj.id).then(() => {
         setFieldMappings(prev => prev.filter(m => m.targetObjectId !== obj.id))
