@@ -213,7 +213,7 @@ function ReplaceDataModal({
 // ── Main overlay ──────────────────────────────────────────────────────────────
 
 export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props) {
-  const [tab, setTab] = useState<'schema' | 'data'>(object.role === 'source' ? 'data' : 'schema')
+  const [tab, setTab] = useState<'schema' | 'data' | 'query'>(object.role === 'source' ? 'data' : 'schema')
   const [fields, setFields] = useState<ObjectField[]>([])
   const [rows, setRows] = useState<Record<string, string>[]>([])
   const [total, setTotal] = useState(0)
@@ -297,20 +297,22 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
 
         {/* Tabs */}
         <div className="px-6 border-b flex gap-6 shrink-0">
-          {(['schema', 'data'] as const).filter(t => t !== 'data' || object.role === 'source').map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={[
-                'py-3 text-sm font-medium border-b-2 transition-colors capitalize',
-                tab === t
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700',
-              ].join(' ')}
-            >
-              {t === 'schema' ? `Schema (${fields.length})` : `Data (${total.toLocaleString()})`}
-            </button>
-          ))}
+          {(['schema', 'data', 'query'] as const)
+            .filter(t => t === 'schema' || object.role === 'source')
+            .map(t => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={[
+                  'py-3 text-sm font-medium border-b-2 transition-colors',
+                  tab === t
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700',
+                ].join(' ')}
+              >
+                {t === 'schema' ? `Schema (${fields.length})` : t === 'data' ? `Data (${total.toLocaleString()})` : 'Query'}
+              </button>
+            ))}
         </div>
 
         {/* Replace data modal */}
@@ -335,7 +337,7 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
 
         {/* Content */}
         <div className="flex-1 overflow-auto">
-          {loading ? (
+          {loading && tab !== 'query' ? (
             <div className="flex items-center justify-center h-40 text-gray-400 gap-2">
               <span className="animate-spin">⟳</span>
               <span className="text-sm">Loading…</span>
@@ -347,6 +349,8 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
               picklists={picklists}
               onFieldsSaved={handleFieldsSaved}
             />
+          ) : tab === 'query' ? (
+            <QueryTab objectId={object.id} fields={fields} />
           ) : (
             <DataTab
               fields={fields}
@@ -577,6 +581,303 @@ function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
         >
           ✏ Edit schema
         </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Query tab ─────────────────────────────────────────────────────────────────
+
+const NO_VALUE_OPS = new Set(['is_empty', 'is_not_empty'])
+
+const QUERY_OPS = [
+  { value: '=',            label: 'equals' },
+  { value: '!=',           label: 'not equals' },
+  { value: 'contains',     label: 'contains' },
+  { value: 'not_contains', label: "doesn't contain" },
+  { value: 'starts_with',  label: 'starts with' },
+  { value: 'ends_with',    label: 'ends with' },
+  { value: 'is_empty',     label: 'is empty' },
+  { value: 'is_not_empty', label: 'is not empty' },
+  { value: '>',            label: 'greater than' },
+  { value: '<',            label: 'less than' },
+]
+
+const ALL_ROWS_LIMIT = 9999
+const MAX_DISPLAY    = 500
+
+interface QueryFilter {
+  id: string
+  field: string
+  op: string
+  value: string
+}
+
+function applyQueryFilter(row: Record<string, string>, f: QueryFilter): boolean {
+  const cell = (row[f.field] ?? '').toLowerCase()
+  const val  = f.value.toLowerCase()
+  switch (f.op) {
+    case '=':            return cell === val
+    case '!=':           return cell !== val
+    case 'contains':     return cell.includes(val)
+    case 'not_contains': return !cell.includes(val)
+    case 'starts_with':  return cell.startsWith(val)
+    case 'ends_with':    return cell.endsWith(val)
+    case 'is_empty':     return cell === ''
+    case 'is_not_empty': return cell !== ''
+    case '>':            return cell > val
+    case '<':            return cell < val
+    default:             return true
+  }
+}
+
+function QueryTab({ objectId, fields }: { objectId: string; fields: ObjectField[] }) {
+  const fieldNames = fields.map(f => f.name)
+
+  const [allRows,       setAllRows]       = useState<Record<string, string>[]>([])
+  const [loadTotal,     setLoadTotal]     = useState(0)
+  const [loading,       setLoading]       = useState(true)
+  const [filters,       setFilters]       = useState<QueryFilter[]>([])
+  const [visibleCols,   setVisibleCols]   = useState<Set<string>>(() => new Set(fieldNames))
+  const [distinct,      setDistinct]      = useState(false)
+  const [colPickerOpen, setColPickerOpen] = useState(false)
+  const colPickerRef = useRef<HTMLDivElement>(null)
+  const colBtnRef    = useRef<HTMLButtonElement>(null)
+
+  // Sync visible cols if fields arrive after first render
+  const prevFieldCount = useRef(0)
+  useEffect(() => {
+    if (fieldNames.length !== prevFieldCount.current) {
+      prevFieldCount.current = fieldNames.length
+      setVisibleCols(new Set(fieldNames))
+    }
+  })
+
+  useEffect(() => {
+    setLoading(true)
+    platform.getRows(objectId, 0, ALL_ROWS_LIMIT)
+      .then(({ rows, total }) => { setAllRows(rows); setLoadTotal(total) })
+      .finally(() => setLoading(false))
+  }, [objectId])
+
+  useEffect(() => {
+    if (!colPickerOpen) return
+    const handler = (e: MouseEvent) => {
+      if (
+        !colPickerRef.current?.contains(e.target as Node) &&
+        !colBtnRef.current?.contains(e.target as Node)
+      ) setColPickerOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [colPickerOpen])
+
+  const allColNames = fieldNames.length > 0
+    ? fieldNames
+    : allRows.length > 0 ? Object.keys(allRows[0]) : []
+
+  const effectiveCols = allColNames.filter(n => visibleCols.has(n))
+
+  const activeFilters = filters.filter(f =>
+    f.field && f.op && (f.value !== '' || NO_VALUE_OPS.has(f.op))
+  )
+  const filteredRows = activeFilters.length === 0
+    ? allRows
+    : allRows.filter(row => activeFilters.every(f => applyQueryFilter(row, f)))
+
+  const resultRows = distinct
+    ? (() => {
+        const seen = new Set<string>()
+        return filteredRows.filter(row => {
+          const key = effectiveCols.map(c => row[c] ?? '').join('\x00')
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+      })()
+    : filteredRows
+
+  const displayRows = resultRows.slice(0, MAX_DISPLAY)
+
+  const addFilter = () => setFilters(prev => [
+    ...prev,
+    { id: crypto.randomUUID(), field: allColNames[0] ?? '', op: 'contains', value: '' },
+  ])
+  const removeFilter = (id: string) => setFilters(prev => prev.filter(f => f.id !== id))
+  const updateFilter = (id: string, patch: Partial<QueryFilter>) =>
+    setFilters(prev => prev.map(f => f.id === id ? { ...f, ...patch } : f))
+
+  const toggleCol = (name: string) =>
+    setVisibleCols(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) { if (next.size > 1) next.delete(name) }
+      else next.add(name)
+      return next
+    })
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-40 text-gray-400 gap-2">
+      <span className="animate-spin">⟳</span>
+      <span className="text-sm">Loading…</span>
+    </div>
+  )
+
+  if (allRows.length === 0) return (
+    <div className="flex items-center justify-center h-40 text-gray-300 text-sm">
+      No data — import a file first
+    </div>
+  )
+
+  return (
+    <div className="flex flex-col h-full">
+
+      {/* Controls */}
+      <div className="px-4 py-3 border-b bg-gray-50 shrink-0 space-y-2">
+        <div className="flex items-center gap-3 flex-wrap">
+
+          {/* Distinct toggle */}
+          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={distinct}
+              onChange={e => setDistinct(e.target.checked)}
+              className="w-4 h-4 accent-blue-600 rounded"
+            />
+            Unique rows only
+          </label>
+
+          {/* Column picker */}
+          <div className="relative">
+            <button
+              ref={colBtnRef}
+              onClick={() => setColPickerOpen(v => !v)}
+              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg bg-white hover:bg-gray-50 text-gray-600 font-medium flex items-center gap-1.5 transition-colors"
+            >
+              ⊞ Columns ({visibleCols.size}/{allColNames.length})
+            </button>
+            {colPickerOpen && (
+              <div
+                ref={colPickerRef}
+                className="absolute left-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[200px] max-h-72 overflow-y-auto"
+              >
+                <div className="px-3 py-1.5 flex gap-3 border-b border-gray-100 mb-1">
+                  <button
+                    onClick={() => setVisibleCols(new Set(allColNames))}
+                    className="text-xs text-blue-600 hover:underline"
+                  >All</button>
+                  <button
+                    onClick={() => { if (allColNames[0]) setVisibleCols(new Set([allColNames[0]])) }}
+                    className="text-xs text-gray-400 hover:underline"
+                  >None</button>
+                </div>
+                {allColNames.map(name => (
+                  <label
+                    key={name}
+                    className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-gray-50 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={visibleCols.has(name)}
+                      onChange={() => toggleCol(name)}
+                      className="w-3.5 h-3.5 accent-blue-600 shrink-0"
+                    />
+                    <span className="text-xs font-mono text-gray-700 truncate">{name}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Add filter */}
+          <button
+            onClick={addFilter}
+            className="text-xs px-3 py-1.5 border border-dashed border-gray-300 rounded-lg hover:bg-white text-gray-500 hover:text-gray-700 transition-colors"
+          >
+            + Add filter
+          </button>
+        </div>
+
+        {/* Filter rows */}
+        {filters.map(f => (
+          <div key={f.id} className="flex items-center gap-2 flex-wrap">
+            <select
+              value={f.field}
+              onChange={e => updateFilter(f.id, { field: e.target.value })}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+            >
+              {allColNames.map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <select
+              value={f.op}
+              onChange={e => updateFilter(f.id, { op: e.target.value, value: '' })}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+            >
+              {QUERY_OPS.map(op => <option key={op.value} value={op.value}>{op.label}</option>)}
+            </select>
+            {!NO_VALUE_OPS.has(f.op) && (
+              <input
+                value={f.value}
+                onChange={e => updateFilter(f.id, { value: e.target.value })}
+                placeholder="value…"
+                className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 w-36 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            )}
+            <button
+              onClick={() => removeFilter(f.id)}
+              className="text-gray-300 hover:text-red-400 text-sm transition-colors"
+              title="Remove filter"
+            >✕</button>
+          </div>
+        ))}
+      </div>
+
+      {/* Row count */}
+      <div className="px-4 py-1.5 border-b shrink-0 text-xs text-gray-400 flex items-center gap-1 bg-white">
+        <span className="font-semibold text-gray-700">{resultRows.length.toLocaleString()}</span>
+        <span>of {allRows.length.toLocaleString()} rows</span>
+        {loadTotal > allRows.length && (
+          <span className="ml-1 text-amber-500">
+            · source has {loadTotal.toLocaleString()} rows, showing first {ALL_ROWS_LIMIT.toLocaleString()}
+          </span>
+        )}
+        {resultRows.length > MAX_DISPLAY && (
+          <span className="ml-1 text-amber-500">· display capped at {MAX_DISPLAY}</span>
+        )}
+      </div>
+
+      {/* Results table */}
+      <div className="flex-1 overflow-auto">
+        {displayRows.length === 0 ? (
+          <div className="flex items-center justify-center h-40 text-gray-300 text-sm">
+            No rows match the current filters
+          </div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50 sticky top-0">
+              <tr>
+                {effectiveCols.map(h => (
+                  <th
+                    key={h}
+                    className="text-left px-3 py-2.5 font-semibold text-gray-500 whitespace-nowrap border-r border-gray-100 last:border-0"
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {displayRows.map((row, i) => (
+                <tr key={i} className="hover:bg-blue-50/30">
+                  {effectiveCols.map(h => (
+                    <td key={h} className="px-3 py-2 text-gray-700 whitespace-nowrap border-r border-gray-50 last:border-0">
+                      {row[h] || <span className="text-gray-300">—</span>}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   )
