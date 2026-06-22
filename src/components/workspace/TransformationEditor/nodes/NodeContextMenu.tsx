@@ -6,9 +6,10 @@ interface Props {
   onRename: () => void
   onDelete: () => void
   onClose: () => void
+  showRename?: boolean
 }
 
-export function NodeContextMenu({ x, y, onRename, onDelete, onClose }: Props) {
+export function NodeContextMenu({ x, y, onRename, onDelete, onClose, showRename = true }: Props) {
   useEffect(() => {
     const handler = () => onClose()
     document.addEventListener('mousedown', handler)
@@ -32,8 +33,12 @@ export function NodeContextMenu({ x, y, onRename, onDelete, onClose }: Props) {
       onMouseDown={e => e.stopPropagation()}
       onContextMenu={e => e.preventDefault()}
     >
-      <MenuButton label="Rename" onClick={onRename} />
-      <div style={{ height: 1, background: '#f3f4f6' }} />
+      {showRename && (
+        <>
+          <MenuButton label="Rename" onClick={onRename} />
+          <div style={{ height: 1, background: '#f3f4f6' }} />
+        </>
+      )}
       <MenuButton label="Delete" danger onClick={onDelete} />
     </div>
   )

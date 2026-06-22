@@ -200,6 +200,17 @@ export function SourceFieldPicker({
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
+  // Reposition dropdown on scroll so it tracks the trigger inside scrollable containers
+  useEffect(() => {
+    if (!open) return
+    const update = () => {
+      const rect = triggerRef.current?.getBoundingClientRect()
+      if (rect) setPos({ top: rect.bottom + 2, left: rect.left, width: Math.max(rect.width, 220) })
+    }
+    window.addEventListener('scroll', update, { capture: true, passive: true })
+    return () => window.removeEventListener('scroll', update, { capture: true })
+  }, [open])
+
   if (upstreamSourceIds.length === 0) {
     return <span className="text-amber-500 text-xs italic">no source connected</span>
   }

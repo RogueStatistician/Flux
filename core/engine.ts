@@ -222,15 +222,42 @@ export function applySubstring(
     : val.substring(start)
 }
 
+function parseDateWithFormat(val: string, fmt: string): Date | null {
+  const sepMatch = /[^A-Z]/.exec(fmt)
+  let year = NaN, month = NaN, day = NaN
+  if (!sepMatch) {
+    // No separator (e.g. YYYYMMDD)
+    const yIdx = fmt.indexOf('YYYY')
+    const mIdx = fmt.indexOf('MM')
+    const dIdx = fmt.indexOf('DD')
+    if (yIdx >= 0) year  = parseInt(val.substring(yIdx, yIdx + 4), 10)
+    if (mIdx >= 0) month = parseInt(val.substring(mIdx, mIdx + 2), 10)
+    if (dIdx >= 0) day   = parseInt(val.substring(dIdx, dIdx + 2), 10)
+  } else {
+    const sep = sepMatch[0]
+    const fmtParts = fmt.split(sep)
+    const valParts = val.split(sep)
+    for (let i = 0; i < fmtParts.length; i++) {
+      const v = parseInt(valParts[i] ?? '', 10)
+      if (fmtParts[i] === 'YYYY') year  = v
+      else if (fmtParts[i] === 'MM') month = v
+      else if (fmtParts[i] === 'DD') day   = v
+    }
+  }
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return null
+  const d = new Date(year, month - 1, day)
+  return isNaN(d.getTime()) ? null : d
+}
+
 export function applyDateFormat(
-  cfg: { sourceFieldName: string; outputFormat?: string },
+  cfg: { sourceFieldName: string; sourceFormat?: string; outputFormat?: string },
   row: Record<string, string>,
 ): string {
   const val = row[cfg.sourceFieldName] ?? ''
   if (!val) return ''
   try {
-    const d = new Date(val)
-    if (isNaN(d.getTime())) return val
+    const d = cfg.sourceFormat ? parseDateWithFormat(val, cfg.sourceFormat) : new Date(val)
+    if (!d || isNaN(d.getTime())) return val
     const fmt = cfg.outputFormat ?? 'YYYY-MM-DD'
     const year  = d.getFullYear()
     const month = String(d.getMonth() + 1).padStart(2, '0')

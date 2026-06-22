@@ -44,6 +44,7 @@ import { AppendOperatorNode } from './nodes/AppendOperatorNode.js'
 import type { AppendNodeData } from './nodes/AppendOperatorNode.js'
 import { DeduplicateOperatorNode } from './nodes/DeduplicateOperatorNode.js'
 import type { DeduplicateNodeData } from './nodes/DeduplicateOperatorNode.js'
+import { NoteNode } from './nodes/NoteNode.js'
 import { MapPanel } from './MapPanel.js'
 import { JoinPanel } from './JoinPanel.js'
 import { FilterPanel } from './FilterPanel.js'
@@ -65,13 +66,14 @@ const NODE_TYPES = {
   filterOperator:      FilterOperatorNode,
   appendOperator:      AppendOperatorNode,
   dedupOperator:       DeduplicateOperatorNode,
+  noteNode:            NoteNode,
 }
 
 const EDGE_TYPES = {
   pipeline: PipelineEdge,
 }
 
-const OPERATOR_TYPES = new Set(['joinOperator', 'filterOperator', 'appendOperator', 'dedupOperator'])
+const OPERATOR_TYPES = new Set(['joinOperator', 'filterOperator', 'appendOperator', 'dedupOperator', 'noteNode'])
 
 // ── Edge style helpers ────────────────────────────────────────────────────────
 
@@ -470,16 +472,13 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
     if (isOnCanvas) {
       // Remove the node and its edges — mappings are preserved (column-name based).
       // The MapPanel will flag any rules that reference fields no longer available.
-      setNodes(nds => {
-        const updated = nds.filter(n => n.id !== nodeId)
-        scheduleSave(updated, edgesRef.current)
-        return updated
-      })
-      setEdges(eds => {
-        const updated = eds.filter(e => e.source !== nodeId && e.target !== nodeId)
-        scheduleSave(nodesRef.current, updated)
-        return updated
-      })
+      // Compute both updates from refs before any setState so scheduleSave gets
+      // consistent lists (refs lag behind by one render if called via functional setter).
+      const updatedNodes = nodesRef.current.filter(n => n.id !== nodeId)
+      const updatedEdges = edgesRef.current.filter(e => e.source !== nodeId && e.target !== nodeId)
+      setNodes(updatedNodes)
+      setEdges(updatedEdges)
+      scheduleSave(updatedNodes, updatedEdges)
     } else {
       const srcCount = nodesRef.current.filter(n => n.type === 'sourceObject').length
       const newNode: Node = {
@@ -509,16 +508,11 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
         .map(n => n.id)
       const idsToRemove = new Set([tgtNodeId, ...mapNodeIdsToRemove])
 
-      setNodes(nds => {
-        const updated = nds.filter(n => !idsToRemove.has(n.id))
-        scheduleSave(updated, edgesRef.current)
-        return updated
-      })
-      setEdges(eds => {
-        const updated = eds.filter(e => !idsToRemove.has(e.source) && !idsToRemove.has(e.target))
-        scheduleSave(nodesRef.current, updated)
-        return updated
-      })
+      const updatedNodes = nodesRef.current.filter(n => !idsToRemove.has(n.id))
+      const updatedEdges = edgesRef.current.filter(e => !idsToRemove.has(e.source) && !idsToRemove.has(e.target))
+      setNodes(updatedNodes)
+      setEdges(updatedEdges)
+      scheduleSave(updatedNodes, updatedEdges)
       // Delete ALL field mapping rules for this target (all MapNodes + legacy null-scoped)
       platform.deleteFieldMappingsByTarget(transformationId, obj.id).then(() => {
         setFieldMappings(prev => prev.filter(m => m.targetObjectId !== obj.id))
@@ -609,6 +603,21 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
     })
   }, [scheduleSave])
 
+  const handleAddNote = useCallback(() => {
+    const id = `note-${Date.now()}`
+    const newNode: Node = {
+      id,
+      type: 'noteNode',
+      position: { x: 60, y: 300 },
+      data: { text: '' },
+    }
+    setNodes(nds => {
+      const updated = [...nds, newNode]
+      scheduleSave(updated, edgesRef.current)
+      return updated
+    })
+  }, [scheduleSave])
+
   const handleAddDedup = useCallback(() => {
     const id = `dedup-${Date.now()}`
     const opCount = nodesRef.current.filter(n => n.type === 'joinOperator' || n.type === 'filterOperator' || n.type === 'appendOperator' || n.type === 'dedupOperator').length
@@ -662,6 +671,14 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
         const d = n.data as unknown as AppendNodeData
         return { ...n, data: { ...n.data, inputCount: Math.min((d.inputCount ?? 2) + 1, 8) } }
       })
+      scheduleSave(updated, edgesRef.current)
+      return updated
+    })
+  }, [scheduleSave])
+
+  const onNoteChange = useCallback((nodeId: string, text: string) => {
+    setNodes(nds => {
+      const updated = nds.map(n => n.id !== nodeId ? n : { ...n, data: { ...n.data, text } })
       scheduleSave(updated, edgesRef.current)
       return updated
     })
@@ -778,8 +795,8 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
   // ── Context ────────────────────────────────────────────────────────────────
 
   const ctxValue = useMemo<EditorContextValue>(
-    () => ({ onMapNodeClick, onJoinNodeClick, onFilterNodeClick, onDedupNodeClick, onAppendAddInput, onNodeRename }),
-    [onMapNodeClick, onJoinNodeClick, onFilterNodeClick, onDedupNodeClick, onAppendAddInput, onNodeRename],
+    () => ({ onMapNodeClick, onJoinNodeClick, onFilterNodeClick, onDedupNodeClick, onAppendAddInput, onNodeRename, onNoteChange }),
+    [onMapNodeClick, onJoinNodeClick, onFilterNodeClick, onDedupNodeClick, onAppendAddInput, onNodeRename, onNoteChange],
   )
 
   // ── Derived ────────────────────────────────────────────────────────────────
@@ -894,6 +911,13 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
             >
               ◎ Add Deduplicate
             </button>
+            <button
+              onClick={handleAddNote}
+              className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium mt-1 transition-colors"
+              style={{ color: '#854d0e', background: '#fefce8', border: '1px solid #fde047' }}
+            >
+              ✎ Add Note
+            </button>
           </div>
 
           <div className="mt-auto pt-2 border-t border-gray-200">
@@ -939,6 +963,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
                   n.type === 'mapOperator'    ? '#ddd6fe' :
                   n.type === 'joinOperator'   ? '#fed7aa' :
                   n.type === 'appendOperator' ? '#e2e8f0' :
+                  n.type === 'noteNode'       ? '#fef08a' :
                   '#fde68a'
                 }
                 maskColor="rgba(0,0,0,0.03)"
@@ -963,6 +988,7 @@ export function TransformationEditor({ transformationId, onBack }: Props) {
               onRename={() => handleContextMenuRename(ctxMenu.nodeId)}
               onDelete={() => handleContextMenuDelete(ctxMenu.nodeId, ctxMenu.nodeType)}
               onClose={() => setCtxMenu(null)}
+              showRename={ctxMenu.nodeType !== 'noteNode'}
             />
           )}
 

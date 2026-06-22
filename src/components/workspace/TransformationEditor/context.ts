@@ -13,6 +13,8 @@ export interface EditorContextValue {
   onAppendAddInput: (appendNodeId: string) => void
   /** Called when a user commits a new label for any operator node. */
   onNodeRename: (nodeId: string, label: string) => void
+  /** Called when the text content of a NoteNode changes. */
+  onNoteChange: (nodeId: string, text: string) => void
 }
 
 export const EditorContext = createContext<EditorContextValue | null>(null)

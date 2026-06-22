@@ -21,207 +21,43 @@ interface Props {
   onObjectUpdated: (obj: DataObject) => void
 }
 
-// ── Replace Data Modal ────────────────────────────────────────────────────────
-
-function ReplaceDataModal({
-  object,
-  onClose,
-  onReplaced,
-}: {
-  object: DataObject
-  onClose: () => void
-  onReplaced: (newRowCount: number) => void
-}) {
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [filePath, setFilePath] = useState<string>('')
-  const [fileName, setFileName] = useState<string>('')
-  const [headerRow, setHeaderRow] = useState(object.templateHeaderRow ?? 0)
-  const [dataStartRow, setDataStartRow] = useState(object.templateDataStartRow ?? (object.templateHeaderRow ?? 0) + 1)
-  const [preview, setPreview] = useState<{ headers: string[]; rows: Record<string, string>[] } | null>(null)
-  const [importing, setImporting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function loadPreview(fp: string, skipRows: number) {
-    try {
-      const res = await platform.inferSchema(fp, { skipRows })
-      setPreview({ headers: res.headers ?? [], rows: (res.rows ?? []).slice(0, 8) })
-      setError(null)
-    } catch (e) {
-      setError(`Preview failed: ${e instanceof Error ? e.message : String(e)}`)
-      setPreview(null)
-    }
-  }
-
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const fp = (file as unknown as { path: string }).path
-    setFilePath(fp)
-    setFileName(file.name)
-    loadPreview(fp, headerRow)
-  }
-
-  function handleHeaderRowChange(v: number) {
-    setHeaderRow(v)
-    const newDataStart = Math.max(v + 1, dataStartRow)
-    setDataStartRow(newDataStart)
-    if (filePath) loadPreview(filePath, v)
-  }
-
-  async function handleImport() {
-    if (!filePath) return
-    setImporting(true)
-    setError(null)
-    try {
-      const opts: { skipRows: number; dataStartRow?: number } = { skipRows: headerRow }
-      if (dataStartRow !== headerRow + 1) opts.dataStartRow = dataStartRow
-      await platform.importRows(object.id, filePath, opts)
-      // Get updated row count from a fresh getRows call (total field)
-      const { total } = await platform.getRows(object.id, 0, 1)
-      onReplaced(total)
-      onClose()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Import failed.')
-      setImporting(false)
-    }
-  }
-
-  return (
-    <div
-      className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-6"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <div
-        className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
-        style={{ width: 'min(95vw, 860px)', maxHeight: 'min(90vh, 700px)' }}
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="px-6 py-4 border-b bg-blue-50 shrink-0 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold text-blue-600 uppercase tracking-widest mb-0.5">Replace source data</p>
-            <p className="text-base font-semibold text-gray-900">{object.name}</p>
-            <p className="text-xs text-gray-400 mt-0.5">
-              Existing rows will be replaced. Schema and transformation rules are unchanged.
-            </p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-2xl leading-none shrink-0">✕</button>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-          {/* File picker */}
-          <div>
-            <p className="text-sm font-semibold text-gray-700 mb-2">Select file</p>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => fileRef.current?.click()}
-                className="px-4 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Browse…
-              </button>
-              <span className="text-sm text-gray-500">{fileName || 'No file selected'}</span>
-              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFileChange} />
-            </div>
-          </div>
-
-          {/* Parse options */}
-          <div className="flex items-center gap-6 flex-wrap">
-            <label className="flex items-center gap-2 text-sm text-gray-600">
-              Header row
-              <input
-                type="number"
-                min={0}
-                value={headerRow + 1}
-                onChange={e => handleHeaderRowChange(Math.max(0, Number(e.target.value) - 1))}
-                className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
-              />
-              <span className="text-xs text-gray-400">(1 = first row)</span>
-            </label>
-            <label className="flex items-center gap-2 text-sm text-gray-600">
-              Data starts at row
-              <input
-                type="number"
-                min={headerRow + 2}
-                value={dataStartRow + 1}
-                onChange={e => setDataStartRow(Math.max(headerRow + 1, Number(e.target.value) - 1))}
-                className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
-              />
-              <span className="text-xs text-gray-400">(1 = first row)</span>
-            </label>
-          </div>
-
-          {/* Error */}
-          {error && (
-            <div className="px-4 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
-              {error}
-            </div>
-          )}
-
-          {/* Preview */}
-          {preview && (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                Preview (first {preview.rows.length} data rows)
-              </p>
-              <div className="overflow-auto border border-gray-100 rounded-xl" style={{ maxHeight: 260 }}>
-                <table className="w-full text-xs">
-                  <thead className="bg-gray-50 sticky top-0">
-                    <tr>
-                      {preview.headers.map(h => (
-                        <th key={h} className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap border-r border-gray-100 last:border-0">
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {preview.rows.map((row, i) => (
-                      <tr key={i}>
-                        {preview.headers.map(h => (
-                          <td key={h} className="px-3 py-1.5 text-gray-700 whitespace-nowrap border-r border-gray-50 last:border-0">
-                            {row[h] ?? <span className="text-gray-300">—</span>}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="px-6 py-4 border-t bg-gray-50 shrink-0 flex items-center justify-between">
-          <button onClick={onClose} className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
-            Cancel
-          </button>
-          <button
-            onClick={handleImport}
-            disabled={!filePath || importing}
-            className="px-6 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 disabled:opacity-40 transition-colors"
-          >
-            {importing ? 'Importing…' : 'Replace data'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // ── Main overlay ──────────────────────────────────────────────────────────────
 
 export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props) {
-  const [tab, setTab] = useState<'schema' | 'data'>(object.role === 'source' ? 'data' : 'schema')
+  const [tab, setTab] = useState<'schema' | 'data' | 'query'>(object.role === 'source' ? 'data' : 'schema')
   const [fields, setFields] = useState<ObjectField[]>([])
   const [rows, setRows] = useState<Record<string, string>[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(true)
   const [picklists, setPicklists] = useState<Picklist[]>([])
-  const [showReplaceModal, setShowReplaceModal] = useState(false)
+  const [replacing, setReplacing] = useState(false)
   const [rowCount, setRowCount] = useState(object.rowCount)
+
+  const handleReplaceData = async () => {
+    const result = await platform.openFile({
+      title: `Replace data for "${object.name}"`,
+      filters: [{ name: 'Excel / CSV', extensions: ['xlsx', 'xls', 'csv'] }],
+      properties: ['openFile'],
+    })
+    if (result.canceled || !result.filePaths[0]) return
+    setReplacing(true)
+    try {
+      const { rowCount: newCount } = await platform.relinkSourceFile(object.id, result.filePaths[0])
+      setRowCount(newCount)
+      setTotal(newCount)
+      setPage(0)
+      onObjectUpdated({ ...object, rowCount: newCount })
+      setTab('data')
+      const { rows: r, total: t } = await platform.getRows(object.id, 0, PAGE_SIZE)
+      setRows(r)
+      setTotal(t)
+    } catch (e) {
+      alert(`Replace failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setReplacing(false)
+    }
+  }
 
   // Load fields on mount
   useEffect(() => {
@@ -285,10 +121,11 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
           <div className="flex items-center gap-2">
             {object.role === 'source' && (
               <button
-                onClick={() => setShowReplaceModal(true)}
-                className="text-xs px-3 py-1.5 bg-white border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 text-gray-600 hover:text-blue-700 font-medium transition-colors"
+                onClick={handleReplaceData}
+                disabled={replacing}
+                className="text-xs px-3 py-1.5 bg-white border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 text-gray-600 hover:text-blue-700 font-medium transition-colors disabled:opacity-50"
               >
-                ↑ Replace data
+                {replacing ? '↑ Replacing…' : '↑ Replace data'}
               </button>
             )}
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
@@ -297,45 +134,27 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
 
         {/* Tabs */}
         <div className="px-6 border-b flex gap-6 shrink-0">
-          {(['schema', 'data'] as const).filter(t => t !== 'data' || object.role === 'source').map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={[
-                'py-3 text-sm font-medium border-b-2 transition-colors capitalize',
-                tab === t
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700',
-              ].join(' ')}
-            >
-              {t === 'schema' ? `Schema (${fields.length})` : `Data (${total.toLocaleString()})`}
-            </button>
-          ))}
+          {(['schema', 'data', 'query'] as const)
+            .filter(t => t === 'schema' || object.role === 'source')
+            .map(t => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={[
+                  'py-3 text-sm font-medium border-b-2 transition-colors',
+                  tab === t
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700',
+                ].join(' ')}
+              >
+                {t === 'schema' ? `Schema (${fields.length})` : t === 'data' ? `Data (${total.toLocaleString()})` : 'Query'}
+              </button>
+            ))}
         </div>
-
-        {/* Replace data modal */}
-        {showReplaceModal && (
-          <ReplaceDataModal
-            object={object}
-            onClose={() => setShowReplaceModal(false)}
-            onReplaced={newCount => {
-              setRowCount(newCount)
-              setTotal(newCount)
-              setPage(0)
-              onObjectUpdated({ ...object, rowCount: newCount })
-              // Reload the data tab
-              setTab('data')
-              platform.getRows(object.id, 0, PAGE_SIZE).then(({ rows: r, total: t }) => {
-                setRows(r)
-                setTotal(t)
-              }).catch(() => {})
-            }}
-          />
-        )}
 
         {/* Content */}
         <div className="flex-1 overflow-auto">
-          {loading ? (
+          {loading && tab !== 'query' ? (
             <div className="flex items-center justify-center h-40 text-gray-400 gap-2">
               <span className="animate-spin">⟳</span>
               <span className="text-sm">Loading…</span>
@@ -347,6 +166,8 @@ export function ObjectDetailOverlay({ object, onClose, onObjectUpdated }: Props)
               picklists={picklists}
               onFieldsSaved={handleFieldsSaved}
             />
+          ) : tab === 'query' ? (
+            <QueryTab objectId={object.id} fields={fields} />
           ) : (
             <DataTab
               fields={fields}
@@ -447,7 +268,7 @@ function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 sticky top-0">
               <tr>
-                {['#', 'Field Name', 'Description', 'Type', 'Picklist', 'Req'].map(h => (
+                {['#', 'Field Name', 'Description', 'Type', 'Date Format', 'Picklist', 'Req'].map(h => (
                   <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
                     {h}
                   </th>
@@ -475,6 +296,7 @@ function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
                       onChange={e => updateField(f.id, {
                         dataType: e.target.value as typeof FIELD_TYPES[number],
                         picklistId: e.target.value !== 'picklist' ? undefined : f.picklistId,
+                        dateFormat: !['date', 'datetime'].includes(e.target.value) ? undefined : f.dateFormat,
                       })}
                       className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
                     >
@@ -482,6 +304,27 @@ function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
                         <option key={t} value={t}>{t}</option>
                       ))}
                     </select>
+                  </td>
+                  <td className="px-4 py-2">
+                    {(f.dataType === 'date' || f.dataType === 'datetime') ? (
+                      <>
+                        <input
+                          list="schema-date-fmt-list"
+                          value={f.dateFormat ?? ''}
+                          onChange={e => updateField(f.id, { dateFormat: e.target.value || undefined })}
+                          className="w-28 text-xs font-mono border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                          placeholder="DD/MM/YYYY"
+                          title="The format dates appear in this column (e.g. DD/MM/YYYY)"
+                        />
+                        <datalist id="schema-date-fmt-list">
+                          {['DD/MM/YYYY','MM/DD/YYYY','YYYY-MM-DD','YYYY/MM/DD','DD-MM-YYYY','MM-DD-YYYY','YYYYMMDD'].map(f => (
+                            <option key={f} value={f} />
+                          ))}
+                        </datalist>
+                      </>
+                    ) : (
+                      <span className="text-gray-300 text-xs">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-2">
                     {f.dataType === 'picklist' ? (
@@ -538,7 +381,7 @@ function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 sticky top-0">
             <tr>
-              {['#', 'Field Name', 'Description', 'Type', 'Required'].map(h => (
+              {['#', 'Field Name', 'Description', 'Type', 'Date Format', 'Required'].map(h => (
                 <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                   {h}
                 </th>
@@ -560,6 +403,11 @@ function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
                     {f.dataType}
                   </span>
                 </td>
+                <td className="px-4 py-2.5 text-xs font-mono">
+                  {(f.dataType === 'date' || f.dataType === 'datetime') && f.dateFormat
+                    ? <span className="text-amber-700">{f.dateFormat}</span>
+                    : <span className="text-gray-300">—</span>}
+                </td>
                 <td className="px-4 py-2.5 text-xs">
                   {f.isRequired
                     ? <span className="text-red-500 font-medium">Yes</span>
@@ -577,6 +425,303 @@ function SchemaTab({ objectId, fields, picklists, onFieldsSaved }: {
         >
           ✏ Edit schema
         </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Query tab ─────────────────────────────────────────────────────────────────
+
+const NO_VALUE_OPS = new Set(['is_empty', 'is_not_empty'])
+
+const QUERY_OPS = [
+  { value: '=',            label: 'equals' },
+  { value: '!=',           label: 'not equals' },
+  { value: 'contains',     label: 'contains' },
+  { value: 'not_contains', label: "doesn't contain" },
+  { value: 'starts_with',  label: 'starts with' },
+  { value: 'ends_with',    label: 'ends with' },
+  { value: 'is_empty',     label: 'is empty' },
+  { value: 'is_not_empty', label: 'is not empty' },
+  { value: '>',            label: 'greater than' },
+  { value: '<',            label: 'less than' },
+]
+
+const ALL_ROWS_LIMIT = 9999
+const MAX_DISPLAY    = 500
+
+interface QueryFilter {
+  id: string
+  field: string
+  op: string
+  value: string
+}
+
+function applyQueryFilter(row: Record<string, string>, f: QueryFilter): boolean {
+  const cell = (row[f.field] ?? '').toLowerCase()
+  const val  = f.value.toLowerCase()
+  switch (f.op) {
+    case '=':            return cell === val
+    case '!=':           return cell !== val
+    case 'contains':     return cell.includes(val)
+    case 'not_contains': return !cell.includes(val)
+    case 'starts_with':  return cell.startsWith(val)
+    case 'ends_with':    return cell.endsWith(val)
+    case 'is_empty':     return cell === ''
+    case 'is_not_empty': return cell !== ''
+    case '>':            return cell > val
+    case '<':            return cell < val
+    default:             return true
+  }
+}
+
+function QueryTab({ objectId, fields }: { objectId: string; fields: ObjectField[] }) {
+  const fieldNames = fields.map(f => f.name)
+
+  const [allRows,       setAllRows]       = useState<Record<string, string>[]>([])
+  const [loadTotal,     setLoadTotal]     = useState(0)
+  const [loading,       setLoading]       = useState(true)
+  const [filters,       setFilters]       = useState<QueryFilter[]>([])
+  const [visibleCols,   setVisibleCols]   = useState<Set<string>>(() => new Set(fieldNames))
+  const [distinct,      setDistinct]      = useState(false)
+  const [colPickerOpen, setColPickerOpen] = useState(false)
+  const colPickerRef = useRef<HTMLDivElement>(null)
+  const colBtnRef    = useRef<HTMLButtonElement>(null)
+
+  // Sync visible cols if fields arrive after first render
+  const prevFieldCount = useRef(0)
+  useEffect(() => {
+    if (fieldNames.length !== prevFieldCount.current) {
+      prevFieldCount.current = fieldNames.length
+      setVisibleCols(new Set(fieldNames))
+    }
+  })
+
+  useEffect(() => {
+    setLoading(true)
+    platform.getRows(objectId, 0, ALL_ROWS_LIMIT)
+      .then(({ rows, total }) => { setAllRows(rows); setLoadTotal(total) })
+      .finally(() => setLoading(false))
+  }, [objectId])
+
+  useEffect(() => {
+    if (!colPickerOpen) return
+    const handler = (e: MouseEvent) => {
+      if (
+        !colPickerRef.current?.contains(e.target as Node) &&
+        !colBtnRef.current?.contains(e.target as Node)
+      ) setColPickerOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [colPickerOpen])
+
+  const allColNames = fieldNames.length > 0
+    ? fieldNames
+    : allRows.length > 0 ? Object.keys(allRows[0]) : []
+
+  const effectiveCols = allColNames.filter(n => visibleCols.has(n))
+
+  const activeFilters = filters.filter(f =>
+    f.field && f.op && (f.value !== '' || NO_VALUE_OPS.has(f.op))
+  )
+  const filteredRows = activeFilters.length === 0
+    ? allRows
+    : allRows.filter(row => activeFilters.every(f => applyQueryFilter(row, f)))
+
+  const resultRows = distinct
+    ? (() => {
+        const seen = new Set<string>()
+        return filteredRows.filter(row => {
+          const key = effectiveCols.map(c => row[c] ?? '').join('\x00')
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+      })()
+    : filteredRows
+
+  const displayRows = resultRows.slice(0, MAX_DISPLAY)
+
+  const addFilter = () => setFilters(prev => [
+    ...prev,
+    { id: crypto.randomUUID(), field: allColNames[0] ?? '', op: 'contains', value: '' },
+  ])
+  const removeFilter = (id: string) => setFilters(prev => prev.filter(f => f.id !== id))
+  const updateFilter = (id: string, patch: Partial<QueryFilter>) =>
+    setFilters(prev => prev.map(f => f.id === id ? { ...f, ...patch } : f))
+
+  const toggleCol = (name: string) =>
+    setVisibleCols(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) { if (next.size > 1) next.delete(name) }
+      else next.add(name)
+      return next
+    })
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-40 text-gray-400 gap-2">
+      <span className="animate-spin">⟳</span>
+      <span className="text-sm">Loading…</span>
+    </div>
+  )
+
+  if (allRows.length === 0) return (
+    <div className="flex items-center justify-center h-40 text-gray-300 text-sm">
+      No data — import a file first
+    </div>
+  )
+
+  return (
+    <div className="flex flex-col h-full">
+
+      {/* Controls */}
+      <div className="px-4 py-3 border-b bg-gray-50 shrink-0 space-y-2">
+        <div className="flex items-center gap-3 flex-wrap">
+
+          {/* Distinct toggle */}
+          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={distinct}
+              onChange={e => setDistinct(e.target.checked)}
+              className="w-4 h-4 accent-blue-600 rounded"
+            />
+            Unique rows only
+          </label>
+
+          {/* Column picker */}
+          <div className="relative">
+            <button
+              ref={colBtnRef}
+              onClick={() => setColPickerOpen(v => !v)}
+              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg bg-white hover:bg-gray-50 text-gray-600 font-medium flex items-center gap-1.5 transition-colors"
+            >
+              ⊞ Columns ({visibleCols.size}/{allColNames.length})
+            </button>
+            {colPickerOpen && (
+              <div
+                ref={colPickerRef}
+                className="absolute left-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[200px] max-h-72 overflow-y-auto"
+              >
+                <div className="px-3 py-1.5 flex gap-3 border-b border-gray-100 mb-1">
+                  <button
+                    onClick={() => setVisibleCols(new Set(allColNames))}
+                    className="text-xs text-blue-600 hover:underline"
+                  >All</button>
+                  <button
+                    onClick={() => { if (allColNames[0]) setVisibleCols(new Set([allColNames[0]])) }}
+                    className="text-xs text-gray-400 hover:underline"
+                  >None</button>
+                </div>
+                {allColNames.map(name => (
+                  <label
+                    key={name}
+                    className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-gray-50 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={visibleCols.has(name)}
+                      onChange={() => toggleCol(name)}
+                      className="w-3.5 h-3.5 accent-blue-600 shrink-0"
+                    />
+                    <span className="text-xs font-mono text-gray-700 truncate">{name}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Add filter */}
+          <button
+            onClick={addFilter}
+            className="text-xs px-3 py-1.5 border border-dashed border-gray-300 rounded-lg hover:bg-white text-gray-500 hover:text-gray-700 transition-colors"
+          >
+            + Add filter
+          </button>
+        </div>
+
+        {/* Filter rows */}
+        {filters.map(f => (
+          <div key={f.id} className="flex items-center gap-2 flex-wrap">
+            <select
+              value={f.field}
+              onChange={e => updateFilter(f.id, { field: e.target.value })}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+            >
+              {allColNames.map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <select
+              value={f.op}
+              onChange={e => updateFilter(f.id, { op: e.target.value, value: '' })}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+            >
+              {QUERY_OPS.map(op => <option key={op.value} value={op.value}>{op.label}</option>)}
+            </select>
+            {!NO_VALUE_OPS.has(f.op) && (
+              <input
+                value={f.value}
+                onChange={e => updateFilter(f.id, { value: e.target.value })}
+                placeholder="value…"
+                className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 w-36 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            )}
+            <button
+              onClick={() => removeFilter(f.id)}
+              className="text-gray-300 hover:text-red-400 text-sm transition-colors"
+              title="Remove filter"
+            >✕</button>
+          </div>
+        ))}
+      </div>
+
+      {/* Row count */}
+      <div className="px-4 py-1.5 border-b shrink-0 text-xs text-gray-400 flex items-center gap-1 bg-white">
+        <span className="font-semibold text-gray-700">{resultRows.length.toLocaleString()}</span>
+        <span>of {allRows.length.toLocaleString()} rows</span>
+        {loadTotal > allRows.length && (
+          <span className="ml-1 text-amber-500">
+            · source has {loadTotal.toLocaleString()} rows, showing first {ALL_ROWS_LIMIT.toLocaleString()}
+          </span>
+        )}
+        {resultRows.length > MAX_DISPLAY && (
+          <span className="ml-1 text-amber-500">· display capped at {MAX_DISPLAY}</span>
+        )}
+      </div>
+
+      {/* Results table */}
+      <div className="flex-1 overflow-auto">
+        {displayRows.length === 0 ? (
+          <div className="flex items-center justify-center h-40 text-gray-300 text-sm">
+            No rows match the current filters
+          </div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50 sticky top-0">
+              <tr>
+                {effectiveCols.map(h => (
+                  <th
+                    key={h}
+                    className="text-left px-3 py-2.5 font-semibold text-gray-500 whitespace-nowrap border-r border-gray-100 last:border-0"
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {displayRows.map((row, i) => (
+                <tr key={i} className="hover:bg-blue-50/30">
+                  {effectiveCols.map(h => (
+                    <td key={h} className="px-3 py-2 text-gray-700 whitespace-nowrap border-r border-gray-50 last:border-0">
+                      {row[h] || <span className="text-gray-300">—</span>}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   )
